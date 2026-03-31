@@ -630,4 +630,359 @@ class TestPipelineIntegration:
         assert isinstance(result.tracks, list)
         assert result.density is not None
         assert result.annotated_frame is not None
-        assert "total_vehicles" in result.metrics
+        assert "total_vehicles" in result.metrics
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Database
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDatabase:
+    def test_create_database(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        assert (tmp_path / "test.db").is_file()
+
+    def test_start_session(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session(source="video.mp4")
+        assert sid is not None
+        assert len(sid) > 10
+
+    def test_log_and_get_frame(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        db.log_frame(sid, frame_idx=0, metrics={
+            "total_vehicles": 5,
+            "density_label": "Low",
+            "congestion_score": 15.0,
+            "ema_count": 4.8,
+            "counts_per_class": {"car": 3, "truck": 2},
+        })
+        frames = db.get_frame_metrics(sid)
+        assert len(frames) == 1
+        assert frames[0]["total_vehicles"] == 5
+        assert frames[0]["cars"] == 3
+        assert frames[0]["trucks"] == 2
+
+    def test_batch_insert(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        batch = [
+            (i, {"total_vehicles": i * 2, "density_label": "Low", "counts_per_class": {}})
+            for i in range(50)
+        ]
+        db.log_frames_batch(sid, batch)
+        frames = db.get_frame_metrics(sid)
+        assert len(frames) == 50
+
+    def test_session_summary(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        for i in range(10):
+            db.log_frame(sid, i, {
+                "total_vehicles": i + 1,
+                "congestion_score": (i + 1) * 5.0,
+                "counts_per_class": {},
+            })
+        summary = db.get_session_summary(sid)
+        assert summary["total_frames"] == 10
+        assert summary["peak_vehicles"] == 10
+        assert summary["avg_vehicles"] == 5.5
+
+    def test_log_signal(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        db.log_signal(sid, 0, "Lane 1", 60, 60, 0.5, "Normal")
+        logs = db.get_signal_logs(sid)
+        assert len(logs) == 1
+        assert logs[0]["green_time_s"] == 60
+
+    def test_log_anomaly(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        db.log_anomaly(sid, "evt-001", 42, "spike", "warning", "Test spike", 0.8)
+        anomalies = db.get_anomalies(sid)
+        assert len(anomalies) == 1
+        assert anomalies[0]["severity"] == "warning"
+
+    def test_export_csv(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        db.log_frame(sid, 0, {"total_vehicles": 5, "counts_per_class": {}})
+        csv_path = db.export_csv(sid, tmp_path / "export.csv")
+        assert csv_path.is_file()
+        content = csv_path.read_text()
+        assert "total_vehicles" in content
+
+    def test_export_json(self, tmp_path):
+        import json
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        db.log_frame(sid, 0, {"total_vehicles": 3, "counts_per_class": {}})
+        json_path = db.export_json(sid, tmp_path / "export.json")
+        assert json_path.is_file()
+        data = json.loads(json_path.read_text())
+        assert data["session_id"] == sid
+        assert len(data["frame_metrics"]) == 1
+
+    def test_list_sessions(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        db.start_session(source="a.mp4")
+        db.start_session(source="b.mp4")
+        sessions = db.list_sessions()
+        assert len(sessions) == 2
+
+    def test_delete_session(self, tmp_path):
+        from src.database import TrafficDatabase
+        db = TrafficDatabase(tmp_path / "test.db")
+        sid = db.start_session()
+        db.log_frame(sid, 0, {"total_vehicles": 1, "counts_per_class": {}})
+        db.delete_session(sid)
+        assert len(db.get_frame_metrics(sid)) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Heatmap
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestHeatmap:
+    def _make_track(self, track_id=1, x1=80, y1=80, x2=120, y2=120):
+        from src.tracker import Track
+        return Track(track_id=track_id, bbox=np.array([x1, y1, x2, y2], dtype=float),
+                     class_name="car", confidence=0.9, hit_streak=3, age=5)
+
+    def test_init(self):
+        from src.heatmap import HeatmapGenerator
+        hm = HeatmapGenerator(frame_shape=(480, 640))
+        assert hm.width == 640
+        assert hm.height == 480
+        assert hm.frame_count == 0
+
+    def test_update_increments_count(self):
+        from src.heatmap import HeatmapGenerator
+        hm = HeatmapGenerator(frame_shape=(480, 640))
+        tracks = [self._make_track(1, 300, 220, 340, 260)]
+        hm.update(tracks)
+        assert hm.frame_count == 1
+        assert hm.total_points == 1
+
+    def test_render_shape(self):
+        from src.heatmap import HeatmapGenerator
+        hm = HeatmapGenerator(frame_shape=(480, 640))
+        rendered = hm.render()
+        assert rendered.shape == (480, 640, 3)
+
+    def test_overlay_shape(self):
+        from src.heatmap import HeatmapGenerator
+        hm = HeatmapGenerator(frame_shape=(480, 640))
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        tracks = [self._make_track(1, 80, 80, 120, 120)]
+        hm.update(tracks)
+        overlay = hm.overlay(frame)
+        assert overlay.shape == frame.shape
+
+    def test_export(self, tmp_path):
+        from src.heatmap import HeatmapGenerator
+        hm = HeatmapGenerator(frame_shape=(240, 320))
+        tracks = [self._make_track(1, 140, 100, 180, 140)]
+        hm.update(tracks)
+        out = hm.export(tmp_path / "hm.jpg")
+        assert out.is_file()
+
+    def test_reset(self):
+        from src.heatmap import HeatmapGenerator
+        hm = HeatmapGenerator(frame_shape=(240, 320))
+        hm.update([self._make_track(1, 140, 100, 180, 140)])
+        assert hm.frame_count == 1
+        hm.reset()
+        assert hm.frame_count == 0
+        assert hm.total_points == 0
+
+    def test_temporal_decay(self):
+        from src.heatmap import HeatmapGenerator, HeatmapConfig
+        cfg = HeatmapConfig(decay_factor=0.5)
+        hm = HeatmapGenerator(frame_shape=(240, 320), config=cfg)
+        hm.update([self._make_track(1, 140, 100, 180, 140)])
+        peak_after_1 = hm.peak_intensity
+        # Update with no tracks — should decay
+        hm.update([])
+        peak_after_2 = hm.peak_intensity
+        assert peak_after_2 < peak_after_1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Anomaly Detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestAnomalyDetector:
+    def test_init(self):
+        from src.anomaly_detector import AnomalyDetector
+        det = AnomalyDetector()
+        assert det.total_events == 0
+
+    def test_no_anomaly_normal_traffic(self):
+        from src.anomaly_detector import AnomalyDetector
+        det = AnomalyDetector()
+        for i in range(50):
+            events = det.analyse(i, {
+                "total_vehicles": 10,
+                "congestion_score": 30.0,
+                "flow_per_min": 20.0,
+                "trend": "stable",
+            })
+        assert det.total_events == 0
+
+    def test_spike_detected(self):
+        from src.anomaly_detector import AnomalyDetector, AnomalyConfig
+        cfg = AnomalyConfig(zscore_threshold=2.0, zscore_window=20, cooldown_frames=5)
+        det = AnomalyDetector(config=cfg)
+        # Build stable baseline
+        for i in range(30):
+            det.analyse(i, {"total_vehicles": 10, "congestion_score": 20.0,
+                            "flow_per_min": 15.0, "trend": "stable"})
+        # Inject spike
+        events = det.analyse(30, {"total_vehicles": 50, "congestion_score": 90.0,
+                                   "flow_per_min": 15.0, "trend": "rising"})
+        assert len(events) > 0
+        assert any(e.anomaly_type == "spike" for e in events)
+
+    def test_sudden_drop_detected(self):
+        from src.anomaly_detector import AnomalyDetector, AnomalyConfig
+        cfg = AnomalyConfig(drop_pct_threshold=0.40, drop_window=5, cooldown_frames=5)
+        det = AnomalyDetector(config=cfg)
+        # Build baseline with high flow
+        for i in range(20):
+            det.analyse(i, {"total_vehicles": 20, "flow_per_min": 30.0,
+                            "congestion_score": 40.0, "trend": "stable"})
+        # Sudden drop in flow
+        for i in range(20, 30):
+            events = det.analyse(i, {"total_vehicles": 20, "flow_per_min": 5.0,
+                                      "congestion_score": 40.0, "trend": "stable"})
+        # Should have detected a drop
+        assert det.total_events > 0
+
+    def test_congestion_surge(self):
+        from src.anomaly_detector import AnomalyDetector, AnomalyConfig
+        cfg = AnomalyConfig(congestion_critical=70.0, congestion_persist=3, cooldown_frames=5)
+        det = AnomalyDetector(config=cfg)
+        for i in range(10):
+            det.analyse(i, {"total_vehicles": 30, "congestion_score": 85.0,
+                            "flow_per_min": 10.0, "trend": "rising"})
+        assert det.total_events > 0
+
+    def test_cooldown_prevents_spam(self):
+        from src.anomaly_detector import AnomalyDetector, AnomalyConfig
+        cfg = AnomalyConfig(zscore_threshold=2.0, zscore_window=20, cooldown_frames=50)
+        det = AnomalyDetector(config=cfg)
+        for i in range(30):
+            det.analyse(i, {"total_vehicles": 10, "congestion_score": 20.0,
+                            "flow_per_min": 15.0, "trend": "stable"})
+        # First spike
+        det.analyse(30, {"total_vehicles": 50, "congestion_score": 90.0,
+                         "flow_per_min": 15.0, "trend": "rising"})
+        count_after_first = det.total_events
+        # Second spike immediately — should be blocked by cooldown
+        events = det.analyse(31, {"total_vehicles": 50, "congestion_score": 90.0,
+                                   "flow_per_min": 15.0, "trend": "rising"})
+        spike_events = [e for e in events if e.anomaly_type == "spike"]
+        assert len(spike_events) == 0
+
+    def test_reset(self):
+        from src.anomaly_detector import AnomalyDetector
+        det = AnomalyDetector()
+        for i in range(10):
+            det.analyse(i, {"total_vehicles": 10, "congestion_score": 20.0,
+                            "flow_per_min": 15.0, "trend": "stable"})
+        det.reset()
+        assert det.total_events == 0
+
+    def test_event_to_dict(self):
+        from src.anomaly_detector import AnomalyEvent
+        from datetime import datetime
+        event = AnomalyEvent(
+            event_id="test-id", timestamp=datetime.now(), frame_idx=42,
+            anomaly_type="spike", severity="warning",
+            description="Test", confidence=0.8, metrics_snapshot={},
+        )
+        d = event.to_dict()
+        assert d["event_id"] == "test-id"
+        assert d["anomaly_type"] == "spike"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Speed Analyzer
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSpeedAnalyzer:
+    def _make_track(self, track_id=1, x1=80, y1=80, x2=120, y2=120):
+        from src.tracker import Track
+        return Track(track_id=track_id, bbox=np.array([x1, y1, x2, y2], dtype=float),
+                     class_name="car", confidence=0.9, hit_streak=3, age=5)
+
+    def test_init(self):
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        assert sa.total_measurements == 0
+
+    def test_first_frame_no_speed(self):
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        tracks = [self._make_track(1, 80, 80, 120, 120)]
+        results = sa.update(tracks)
+        assert len(results) == 0  # no speed on first sighting
+
+    def test_speed_computed_on_second_frame(self):
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        sa.update([self._make_track(1, 80, 80, 120, 120)])
+        # Vehicle moved 20px right
+        results = sa.update([self._make_track(1, 100, 80, 140, 120)])
+        assert len(results) == 1
+        assert results[0].speed_kmh > 0
+
+    def test_stopped_vehicle(self):
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        sa.update([self._make_track(1, 80, 80, 120, 120)])
+        results = sa.update([self._make_track(1, 80, 80, 120, 120)])
+        assert results[0].speed_class == "stopped"
+
+    def test_summary(self):
+        from src.speed_analyzer import SpeedAnalyzer, VehicleSpeedInfo
+        sa = SpeedAnalyzer(fps=30.0)
+        info_list = [
+            VehicleSpeedInfo(track_id=1, speed_kmh=40.0, direction_deg=90,
+                             speed_class="normal", is_violation=False),
+            VehicleSpeedInfo(track_id=2, speed_kmh=90.0, direction_deg=180,
+                             speed_class="speeding", is_violation=True),
+        ]
+        summary = sa.get_summary(info_list)
+        assert summary["avg_speed_kmh"] == 65.0
+        assert summary["max_speed_kmh"] == 90.0
+        assert summary["violations"] == 1
+
+    def test_stale_tracks_pruned(self):
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        sa.update([self._make_track(1, 80, 80, 120, 120)])
+        # Track 1 disappears
+        sa.update([self._make_track(2, 180, 180, 220, 220)])
+        assert 1 not in sa._track_state
+
+    def test_reset(self):
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        sa.update([self._make_track(1, 80, 80, 120, 120)])
+        sa.reset()
+        assert sa.total_measurements == 0
+        assert len(sa._track_state) == 0

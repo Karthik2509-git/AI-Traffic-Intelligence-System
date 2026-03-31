@@ -68,3 +68,39 @@ output:
   save_annotated: true
   display: false            # Show cv2 window (requires display)
   log_level: INFO           # DEBUG / INFO / WARNING / ERROR
+
+# -- Database (SQLite persistence) ------------------------------------------
+database:
+  enabled: true
+  path: output/traffic.db   # SQLite database file
+
+# -- Heatmap -----------------------------------------------------------------
+heatmap:
+  enabled: true
+  blur_kernel: 51           # Gaussian kernel size (must be odd)
+  decay_factor: 0.96        # Temporal decay per frame (0..1)
+  intensity: 5.0            # Intensity per vehicle center point
+  alpha: 0.55               # Overlay blend factor
+  export_dir: output/heatmaps
+
+# -- Anomaly detection -------------------------------------------------------
+anomaly:
+  enabled: true
+  zscore_threshold: 2.5     # Std-devs for spike detection
+  zscore_window: 30         # Rolling window size for mean/std
+  drop_pct_threshold: 0.50  # Flow drop percentage to trigger alert
+  drop_window: 10           # Frames to compare for drop detection
+  congestion_critical: 80.0 # Congestion score threshold for critical alert
+  congestion_persist: 5     # Frames the threshold must persist
+  cooldown_frames: 30       # Min frames between same-type alerts
+
+# -- Speed analytics ---------------------------------------------------------
+speed:
+  enabled: true
+  pixels_per_meter: 8.0     # Camera calibration factor (measure known distance)
+  ema_alpha: 0.3            # Smoothing factor for speed estimates
+  speed_limit_kmh: 80.0     # Speed limit for violation flagging
+  stopped_max_kmh: 5.0
+  slow_max_kmh: 30.0
+  normal_max_kmh: 60.0
+  fast_max_kmh: 80.0
