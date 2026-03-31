@@ -36,10 +36,25 @@ except ImportError as exc:
 from src.detection import load_model, run_detection
 from src.pipeline import PipelineConfig, TrafficPipeline
 from src.density_analyzer import make_full_frame_lane
-from src.utils import get_project_root, get_logger
+from src.utils import get_project_root, get_logger, load_config
 
 logger = get_logger(__name__)
 ROOT   = get_project_root()
+
+# ── Load YAML defaults ────────────────────────────────────────────────────────
+try:
+    _yaml_cfg = load_config()
+except (FileNotFoundError, ValueError) as _exc:
+    logger.warning("Could not load settings.yaml, using hardcoded defaults: %s", _exc)
+    _yaml_cfg = {}
+
+_cfg_model     = _yaml_cfg.get("model", {})
+_cfg_detection = _yaml_cfg.get("detection", {})
+_cfg_signal    = _yaml_cfg.get("signal", {})
+
+_default_model = _cfg_model.get("name", "yolov8n.pt")
+_default_conf  = _cfg_detection.get("confidence_threshold", 0.40)
+_default_cycle = _cfg_signal.get("cycle_time_s", 120)
 
 
 # ---------------------------------------------------------------------------
@@ -60,16 +75,19 @@ st.set_page_config(
 st.sidebar.title("🚦 Traffic Intelligence")
 st.sidebar.markdown("---")
 
+_model_options = ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt"]
+_model_index   = _model_options.index(_default_model) if _default_model in _model_options else 0
+
 model_choice = st.sidebar.selectbox(
     "YOLO Model",
-    options=["yolov8n.pt", "yolov8s.pt", "yolov8m.pt"],
-    index=0,
+    options=_model_options,
+    index=_model_index,
     help="Larger models → higher accuracy, slower inference.",
 )
 
 conf_threshold = st.sidebar.slider(
     "Confidence Threshold", min_value=0.1, max_value=0.9,
-    value=0.40, step=0.05,
+    value=float(_default_conf), step=0.05,
 )
 
 edge_mode = st.sidebar.toggle(
@@ -79,7 +97,7 @@ edge_mode = st.sidebar.toggle(
 )
 
 cycle_time = st.sidebar.number_input(
-    "Signal Cycle (s)", min_value=30, max_value=300, value=120, step=10,
+    "Signal Cycle (s)", min_value=30, max_value=300, value=int(_default_cycle), step=10,
 )
 
 st.sidebar.markdown("---")

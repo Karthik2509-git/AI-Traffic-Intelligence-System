@@ -457,3 +457,85 @@ class TrafficPipeline:
                 o.lane_name: o.green_time_s for o in schedule.lanes
             }
         return m
+
+
+# ---------------------------------------------------------------------------
+# Factory: build pipeline from settings.yaml
+# ---------------------------------------------------------------------------
+
+def pipeline_from_config(
+    source: str | int | Path,
+    config_path: Path | None = None,
+) -> TrafficPipeline:
+    """
+    Create a fully-configured TrafficPipeline from ``config/settings.yaml``.
+
+    Parameters
+    ----------
+    source      : Video file path, RTSP URL, or integer webcam index.
+    config_path : Optional path to a YAML config file.  Defaults to
+                  ``config/settings.yaml`` relative to the project root.
+
+    Returns
+    -------
+    TrafficPipeline ready for ``.run()`` or ``.process_frame()``.
+    """
+    from src.utils import load_config          # local import — keeps existing imports untouched
+
+    cfg_dict = load_config(config_path)
+
+    # ── Map YAML sections → PipelineConfig fields ─────────────────────
+    model_sec   = cfg_dict.get("model", {})
+    det_sec     = cfg_dict.get("detection", {})
+    density_sec = cfg_dict.get("density_thresholds", {})
+    track_sec   = cfg_dict.get("tracking", {})
+    signal_sec  = cfg_dict.get("signal", {})
+    pred_sec    = cfg_dict.get("prediction", {})
+    output_sec  = cfg_dict.get("output", {})
+
+    pretrained = pred_sec.get("model_path")
+    pretrained_path = Path(pretrained) if pretrained else None
+
+    pipeline_cfg = PipelineConfig(
+        # Detection
+        model_name           = model_sec.get("name", "yolov8n.pt"),
+        confidence_threshold = det_sec.get("confidence_threshold", 0.40),
+        iou_threshold        = det_sec.get("iou_threshold", 0.45),
+        frame_skip           = det_sec.get("frame_skip", 1),
+        inference_size       = model_sec.get("inference_size", 640),
+        # Tracking
+        tracker_max_age      = track_sec.get("max_age", 5),
+        tracker_min_hits     = track_sec.get("min_hits", 3),
+        tracker_iou          = track_sec.get("iou_threshold", 0.30),
+        # Density
+        ema_alpha            = density_sec.get("ema_alpha", 0.20),
+        low_threshold        = density_sec.get("low", 10),
+        high_threshold       = density_sec.get("high", 25),
+        # Prediction
+        min_train_frames     = pred_sec.get("min_train_frames", 100),
+        retrain_every        = pred_sec.get("retrain_every", 500),
+        pretrained_model     = pretrained_path,
+        # Signal
+        cycle_time_s         = signal_sec.get("cycle_time_s", 120),
+        min_green_s          = signal_sec.get("min_green_s", 10),
+        max_green_s          = signal_sec.get("max_green_s", 90),
+        # Output
+        save_annotated       = output_sec.get("save_annotated", True),
+        output_dir           = Path(output_sec.get("dir", "output")),
+        display              = output_sec.get("display", False),
+    )
+
+    # ── Build Lane objects from YAML (if defined) ─────────────────────
+    lanes_raw = cfg_dict.get("lanes", [])
+    lanes: list[Lane] | None = None
+
+    if lanes_raw:
+        import numpy as _np
+        lanes = []
+        for lane_def in lanes_raw:
+            name    = lane_def.get("name", f"Lane {len(lanes) + 1}")
+            polygon = _np.array(lane_def["polygon"], dtype=_np.float32)
+            lanes.append(Lane(name=name, polygon=polygon))
+        logger.info("Loaded %d lane(s) from config.", len(lanes))
+
+    return TrafficPipeline(source=source, lanes=lanes, config=pipeline_cfg)
