@@ -1,4 +1,27 @@
-ultralytics>=8.0.0
-opencv-python
-numpy
-pandas
+# ═══════════════════════════════════════════════════════════════════
+# AI Traffic Intelligence System — Python Dependencies
+# Python 3.10 / 3.11 / 3.12 compatible
+# Install: pip install -r requirements.txt
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Core computer vision ─────────────────────────────────────────────
+ultralytics>=8.2.0           # YOLOv8 (detection + built-in ByteTrack)
+opencv-python>=4.9.0         # Video I/O, image drawing
+numpy>=1.26.0                # Numerical arrays
+
+# ── Machine learning ─────────────────────────────────────────────────
+scikit-learn>=1.4.0          # GradientBoosting, calibration, cross-val
+scipy>=1.12.0                # Hungarian algorithm (linear_sum_assignment)
+joblib>=1.3.0                # Model serialisation
+pandas>=2.2.0                # Feature DataFrames, CSV export
+
+# ── Configuration ────────────────────────────────────────────────────
+pyyaml>=6.0.1                # settings.yaml loader
+
+# ── Dashboard (optional, required for streamlit run) ─────────────────
+streamlit>=1.35.0
+altair>=5.3.0
+
+# ── Development / testing ────────────────────────────────────────────
+pytest>=8.1.0
+pytest-cov>=5.0.0

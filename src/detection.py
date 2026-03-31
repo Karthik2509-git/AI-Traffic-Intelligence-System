@@ -1,270 +1,331 @@
-from pathlib import Path
-from typing import Dict, List, Tuple, Any
-from datetime import datetime
+"""
+detection.py — Core vehicle detection engine.
+
+Wraps YOLOv8 inference with:
+  • Configurable confidence + NMS-IoU thresholds
+  • Per-class count aggregation with confidence-weighted scoring
+  • Structured result schema ready for downstream ML / analytics
+  • Annotated-image export with per-class colour coding
+  • Graceful error handling that never silently swallows exceptions
+"""
+
+from __future__ import annotations
+
 import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from src.utils import get_logger
 
-# YOLOv8 default COCO vehicle class names we care about.
-VEHICLE_CLASSES = {"car", "motorcycle", "bus", "truck"}
+logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+VEHICLE_CLASSES: frozenset[str] = frozenset({"car", "motorcycle", "bus", "truck"})
+
+# BGR colours used when drawing bounding boxes for each vehicle class.
+CLASS_COLOURS: dict[str, tuple[int, int, int]] = {
+    "car":        (86,  180, 233),   # sky-blue
+    "motorcycle": (230, 159,  0),    # orange
+    "bus":        ( 0,  158, 115),   # teal-green
+    "truck":      (213,  94,  0),    # vermilion
+}
+
+DENSITY_THRESHOLDS: dict[str, int] = {"low": 10, "medium": 25}
 
 
-def get_project_root() -> Path:
-    """
-    Return the absolute path to the project root directory.
-
-    This assumes this file lives in `project_root/src/`.
-    """
-    return Path(__file__).resolve().parents[1]
-
-
-def get_default_paths() -> Tuple[Path, Path]:
-    """
-    Provide default input and output image paths relative to the project root.
-
-    - Input:  data/test.jpg
-    - Output: output/output.jpg
-    """
-    root = get_project_root()
-    input_path = root / "data" / "test.jpg"
-    output_path = root / "output" / "output.jpg"
-    return input_path, output_path
-
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
 
 def load_model(model_name: str = "yolov8n.pt") -> YOLO:
-    """
-    Load a YOLOv8 model from the ultralytics package.
-
-    Parameters
-    ----------
-    model_name:
-        Model identifier or path understood by ultralytics.YOLO
-        (e.g. 'yolov8n.pt', 'yolov8s.pt', or a custom .pt file).
-    """
+    """Load a YOLOv8 model, raising a clear RuntimeError on failure."""
+    logger.info("Loading YOLO model: %s", model_name)
     try:
         model = YOLO(model_name)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:
         raise RuntimeError(f"Failed to load YOLO model '{model_name}': {exc}") from exc
+    logger.info("Model loaded successfully.")
     return model
-
-
-def ensure_output_directory(output_path: Path) -> None:
-    """
-    Ensure that the parent directory of the output path exists.
-    """
-    output_dir = output_path.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def classify_density(count: int) -> str:
     """
-    Classify traffic density based on the vehicle count.
+    Map total vehicle count → traffic density label.
 
-    Rules:
-    - Low: < 10
-    - Medium: 10–25
-    - High: > 25
+    Thresholds (tweakable via DENSITY_THRESHOLDS):
+      Low    : count < 10
+      Medium : 10 ≤ count ≤ 25
+      High   : count > 25
     """
-    if count < 10:
+    if count < DENSITY_THRESHOLDS["low"]:
         return "Low"
-    if count <= 25:
+    if count <= DENSITY_THRESHOLDS["medium"]:
         return "Medium"
     return "High"
 
 
-def compute_total_vehicle_count(counts: Dict[str, int]) -> int:
-    """Compute the total vehicle count from a per-class counts dictionary."""
-    return sum(counts.values())
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-
-def print_detection_summary(
-    counts: Dict[str, int],
-    total: int,
-    density: str,
-    processing_time_ms: float,
-) -> None:
-    """Print a clean human-readable summary of detection + density and timing."""
-    print("🚗 Vehicle Detection Summary:")
-    # Keep stable order by iterating over the dictionary (it is created in sorted order).
-    for cls_name, count in counts.items():
-        print(f"{cls_name}: {count}")
-    print(f"\nTotal vehicles: {total}")
-    print(f"Traffic Density: {density}")
-    print(f"Processing time: {processing_time_ms:.2f} ms")
-
-
-def _get_names_map(prediction, model: YOLO) -> Dict[int, str]:
-    """
-    Resolve a YOLO class-id to class-name mapping.
-
-    Ultralytics typically provides `results[0].names` (or falls back to `model.names`).
-    """
+def _resolve_names(prediction: Any, model: YOLO) -> dict[int, str]:
+    """Return a {class_id: class_name} mapping from a YOLO prediction object."""
     names_map = getattr(prediction, "names", None) or getattr(model, "names", None)
-
-    # `names` is usually a dict[int, str], but handle list/other mapping shapes defensively.
     if isinstance(names_map, dict):
         return {int(k): str(v) for k, v in names_map.items()}
-
     if isinstance(names_map, (list, tuple)):
         return {i: str(v) for i, v in enumerate(names_map)}
+    raise RuntimeError("Cannot resolve YOLO class-id → name mapping from model or prediction.")
 
-    raise RuntimeError("Could not resolve YOLO class-id to class-name mapping.")
 
+def _draw_custom_boxes(
+    frame: np.ndarray,
+    boxes_data: Any,
+    names_map: dict[int, str],
+    vehicle_classes: frozenset[str],
+    confidence_threshold: float,
+) -> np.ndarray:
+    """
+    Draw colour-coded bounding boxes on *frame* (modified in-place, copy returned).
+
+    Each box includes:
+      - A filled label strip with class name + confidence score
+      - A 2-pixel border in the class-specific colour
+    """
+    out = frame.copy()
+    if boxes_data is None or boxes_data.xyxy is None:
+        return out
+
+    xyxys = boxes_data.xyxy.cpu().numpy()
+    confs  = boxes_data.conf.cpu().numpy()
+    cls_ids = boxes_data.cls.cpu().numpy().astype(int)
+
+    for xyxy, conf, cls_id in zip(xyxys, confs, cls_ids):
+        if conf < confidence_threshold:
+            continue
+        class_name = names_map.get(cls_id)
+        if class_name not in vehicle_classes:
+            continue
+
+        colour = CLASS_COLOURS.get(class_name, (200, 200, 200))
+        x1, y1, x2, y2 = map(int, xyxy)
+
+        # Bounding box
+        cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2)
+
+        # Label strip
+        label = f"{class_name} {conf:.2f}"
+        (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        strip_y2 = max(y1, lh + baseline + 4)
+        cv2.rectangle(out, (x1, y1 - lh - baseline - 4), (x1 + lw + 4, strip_y2), colour, -1)
+        cv2.putText(
+            out, label,
+            (x1 + 2, strip_y2 - baseline - 2),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+            (255, 255, 255), 1, cv2.LINE_AA,
+        )
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Core detection routine
+# ---------------------------------------------------------------------------
 
 def run_detection(
     model: YOLO,
     input_path: Path,
     output_path: Path,
-    vehicle_classes: List[str] | None = None,
-    confidence_threshold: float = 0.4,
-) -> Dict[str, Any]:
+    vehicle_classes: frozenset[str] | None = None,
+    confidence_threshold: float = 0.40,
+    iou_threshold: float = 0.45,
+) -> dict[str, Any]:
     """
-    Run object detection on a single image and save the annotated output.
+    Run YOLOv8 detection on a single image, annotate it, and return metrics.
 
     Parameters
     ----------
-    model:
-        A loaded ultralytics.YOLO model instance.
-    input_path:
-        Path to the input image.
-    output_path:
-        Path where the annotated image will be written.
-    vehicle_classes:
-        List of class names to treat as vehicles. If None, VEHICLE_CLASSES is used.
-    confidence_threshold:
-        Minimum confidence score for a detection to be counted.
+    model               : Loaded ultralytics.YOLO instance.
+    input_path          : Path to source image.
+    output_path         : Path where the annotated image is written.
+    vehicle_classes     : Set of COCO class names to track. Defaults to VEHICLE_CLASSES.
+    confidence_threshold: Minimum box confidence (0–1). Boxes below this are ignored.
+    iou_threshold       : IoU threshold for non-maximum suppression.
 
     Returns
     -------
-    Dict[str, int]
-        Mapping from vehicle class name to count detected in the image.
+    dict with keys:
+        timestamp           : ISO-8601 string
+        total_vehicles      : int
+        density             : "Low" | "Medium" | "High"
+        counts_per_class    : dict[class_name, int]
+        mean_confidence     : float   (mean conf of accepted detections)
+        processing_time_ms  : float
+        output_path         : str
     """
     if vehicle_classes is None:
-        vehicle_classes = sorted(VEHICLE_CLASSES)
+        vehicle_classes = VEHICLE_CLASSES
 
     if not input_path.is_file():
         raise FileNotFoundError(
-            f"Input image not found at '{input_path}'. "
-            "Make sure 'data/test.jpg' exists relative to the project root."
+            f"Input image not found: '{input_path}'. "
+            "Ensure 'data/test.jpg' exists at the project root."
         )
 
-    # Run inference on the image and measure processing time.
-    start_time = time.time()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Running inference on '%s'", input_path)
+    t_start = time.perf_counter()
     try:
-        results = model(str(input_path))
-    except Exception as exc:  # pragma: no cover - defensive
-        raise RuntimeError(f"Model inference failed for '{input_path}': {exc}") from exc
-    end_time = time.time()
-    processing_time_ms = (end_time - start_time) * 1000.0
+        results = model(
+            str(input_path),
+            conf=confidence_threshold,
+            iou=iou_threshold,
+            verbose=False,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"YOLO inference failed for '{input_path}': {exc}") from exc
+    elapsed_ms = (time.perf_counter() - t_start) * 1_000.0
 
     if not results:
-        raise RuntimeError("YOLO returned no results for the image.")
+        raise RuntimeError("YOLO returned an empty result list.")
 
     prediction = results[0]
+    names_map  = _resolve_names(prediction, model)
 
-    # Prepare counting structure and map class ids to names.
-    counts: Dict[str, int] = {name: 0 for name in vehicle_classes}
-    names_map = _get_names_map(prediction, model)
+    counts: dict[str, int] = {name: 0 for name in sorted(vehicle_classes)}
+    accepted_confidences: list[float] = []
 
     boxes = prediction.boxes
-    if boxes is None or boxes.cls is None:
-        # No detections at all; still generate and save an annotated image.
-        annotated = prediction.plot()
-        ensure_output_directory(output_path)
-        if not cv2.imwrite(str(output_path), annotated):
-            raise IOError(f"Failed to write annotated image to '{output_path}'.")
-    else:
-        # Extract class IDs and confidence scores.
-        class_ids = boxes.cls.cpu().numpy().astype(int)
+    if boxes is not None and boxes.cls is not None and len(boxes.cls):
+        cls_ids = boxes.cls.cpu().numpy().astype(int)
+        confs   = boxes.conf.cpu().numpy().astype(float)
 
-        # Use both class_id and confidence for filtering.
-        if boxes.conf is None:
-            raise RuntimeError("YOLO boxes.conf is missing; cannot apply confidence filtering.")
-        confidences = boxes.conf.cpu().numpy().astype(float)
-
-        if len(class_ids) != len(confidences):
+        if len(cls_ids) != len(confs):
             raise RuntimeError(
-                f"Mismatched detection arrays: class_ids={len(class_ids)} vs confidences={len(confidences)}"
+                f"Array length mismatch: cls_ids={len(cls_ids)}, confs={len(confs)}."
             )
 
-        # Count only vehicle detections with sufficient confidence.
-        for class_id, conf in zip(class_ids, confidences):
-            if conf < confidence_threshold:
-                continue
-
-            class_name = names_map.get(int(class_id))
+        for cls_id, conf in zip(cls_ids, confs):
+            class_name = names_map.get(int(cls_id))
             if class_name in vehicle_classes:
                 counts[class_name] += 1
+                accepted_confidences.append(float(conf))
 
-        # Generate an annotated image and write it to disk.
-        annotated_bgr: np.ndarray = prediction.plot()
-        ensure_output_directory(output_path)
-        if not cv2.imwrite(str(output_path), annotated_bgr):
-            raise IOError(f"Failed to write annotated image to '{output_path}'.")
+    # --- Annotated output image -------------------------------------------
+    raw_frame = cv2.imread(str(input_path))
+    annotated  = _draw_custom_boxes(
+        raw_frame, boxes, names_map, vehicle_classes, confidence_threshold
+    )
 
-    # Build structured result data for downstream ML/analytics pipelines.
-    total = compute_total_vehicle_count(counts)
+    # Overlay HUD: density + counts
+    total   = sum(counts.values())
     density = classify_density(total)
-    result_data: Dict[str, Any] = {
-        "timestamp": datetime.now().isoformat(),
-        "total_vehicles": total,
-        "density": density,
-        "counts_per_class": counts,
-        "processing_time_ms": processing_time_ms,
+    _draw_hud(annotated, counts, total, density)
+
+    if not cv2.imwrite(str(output_path), annotated):
+        raise IOError(f"Failed to write annotated image to '{output_path}'.")
+    logger.info("Annotated image saved to '%s'", output_path)
+
+    mean_conf = float(np.mean(accepted_confidences)) if accepted_confidences else 0.0
+
+    return {
+        "timestamp":          datetime.now().isoformat(),
+        "total_vehicles":     total,
+        "density":            density,
+        "counts_per_class":   counts,
+        "mean_confidence":    round(mean_conf, 4),
+        "processing_time_ms": round(elapsed_ms, 2),
+        "output_path":        str(output_path),
     }
 
-    return result_data
+
+def _draw_hud(
+    frame: np.ndarray,
+    counts: dict[str, int],
+    total: int,
+    density: str,
+) -> None:
+    """Overlay a semi-transparent heads-up display on the annotated frame."""
+    density_colours = {"Low": (0, 200, 100), "Medium": (0, 170, 255), "High": (0, 0, 220)}
+    colour = density_colours.get(density, (200, 200, 200))
+
+    lines = [f"{cls}: {cnt}" for cls, cnt in counts.items()] + [
+        "─" * 18,
+        f"Total : {total}",
+        f"Traffic: {density}",
+    ]
+    pad, line_h, font_scale = 10, 22, 0.55
+    panel_h = pad * 2 + line_h * len(lines)
+    panel_w = 190
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (8, 8), (8 + panel_w, 8 + panel_h), (30, 30, 30), -1)
+    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+
+    for i, line in enumerate(lines):
+        y = 8 + pad + (i + 1) * line_h - 4
+        text_colour = colour if "Traffic" in line else (220, 220, 220)
+        cv2.putText(
+            frame, line,
+            (18, y),
+            cv2.FONT_HERSHEY_SIMPLEX, font_scale,
+            text_colour, 1, cv2.LINE_AA,
+        )
 
 
-def main() -> Dict[str, Any] | None:
-    """
-    Entry point for running vehicle detection on the default image.
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
-    - Loads YOLOv8.
-    - Runs detection on `data/test.jpg`.
-    - Saves annotated output to `output/output.jpg`.
-    - Prints per-class counts and a total vehicle count.
-    """
-    input_path, output_path = get_default_paths()
+def _get_default_paths() -> tuple[Path, Path]:
+    root = Path(__file__).resolve().parents[1]
+    return root / "data" / "test.jpg", root / "output" / "output.jpg"
+
+
+def main() -> dict[str, Any] | None:
+    """Standalone entry point: detect vehicles in data/test.jpg."""
+    input_path, output_path = _get_default_paths()
 
     try:
-        model = load_model("yolov8n.pt")
-        result_data = run_detection(
+        model  = load_model("yolov8n.pt")
+        result = run_detection(
             model=model,
             input_path=input_path,
             output_path=output_path,
-            vehicle_classes=None,  # Keep only supported vehicle classes
-            confidence_threshold=0.4,
         )
-    except FileNotFoundError as not_found_err:
-        # Provide a clear, user-friendly message for missing input images.
-        print(f"[ERROR] {not_found_err}")
+    except FileNotFoundError as e:
+        logger.error("%s", e)
         return None
-    except Exception as exc:
-        # Catch-all for unexpected errors to avoid silent failures.
-        print(f"[ERROR] Unexpected failure during detection: {exc}")
+    except Exception as e:
+        logger.exception("Unexpected detection failure: %s", e)
         return None
 
-    counts = result_data["counts_per_class"]
-    total = result_data["total_vehicles"]
-    density = result_data["density"]
-    processing_time_ms = result_data["processing_time_ms"]
+    _pretty_print(result)
+    return result
 
-    print_detection_summary(
-        counts=counts,
-        total=total,
-        density=density,
-        processing_time_ms=processing_time_ms,
-    )
-    print(f"Annotated image saved to: {output_path}")
-    print("Structured result data:", result_data)
 
-    return result_data
+def _pretty_print(result: dict[str, Any]) -> None:
+    print("\n🚗  Vehicle Detection Summary")
+    print("─" * 32)
+    for cls, cnt in result["counts_per_class"].items():
+        print(f"  {cls:<14} {cnt:>3}")
+    print("─" * 32)
+    print(f"  {'Total':<14} {result['total_vehicles']:>3}")
+    print(f"  Traffic density  : {result['density']}")
+    print(f"  Mean confidence  : {result['mean_confidence']:.2%}")
+    print(f"  Processing time  : {result['processing_time_ms']:.1f} ms")
+    print(f"  Output image     : {result['output_path']}")
+    print()
 
 
 if __name__ == "__main__":
     main()
-

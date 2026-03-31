@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════════
+# AI Traffic Intelligence System — Master Configuration
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Model ───────────────────────────────────────────────────────────
+model:
+  name: yolov8n.pt          # Options: yolov8n / s / m / l / x
+  edge_name: yolov8n.pt     # Used when edge_mode: true
+  inference_size: 640       # Input resolution (px). 320 for edge.
+  device: ""                # "" = auto (GPU if available), "cpu", "cuda:0"
+
+# ── Detection ───────────────────────────────────────────────────────
+detection:
+  confidence_threshold: 0.40   # Min box confidence (0–1)
+  iou_threshold: 0.45          # NMS IoU overlap threshold
+  frame_skip: 1                # Process every N-th frame (1 = all frames)
+  vehicle_classes:
+    - car
+    - motorcycle
+    - bus
+    - truck
+
+# ── Density thresholds ──────────────────────────────────────────────
+density_thresholds:
+  low: 10                   # count < low  → "Low"
+  high: 25                  # count > high → "High"
+  ema_alpha: 0.20           # EMA smoothing factor (0 < α ≤ 1)
+  flow_window_s: 60.0       # Rolling window for flow-rate estimation (seconds)
+
+# ── Multi-object tracking ───────────────────────────────────────────
+tracking:
+  max_age: 5                # Frames a track survives without a match
+  min_hits: 3               # Confirmations before reporting a track
+  iou_threshold: 0.30       # Min IoU for detection–track association
+
+# ── Signal optimizer ────────────────────────────────────────────────
+signal:
+  cycle_time_s: 120         # Total signal cycle (all lanes)
+  min_green_s: 10           # Hard minimum green per lane (safety)
+  max_green_s: 90           # Hard maximum green per lane (starvation)
+  high_prob_weight: 0.50    # Weight of P(High) in pressure calculation
+  trend_multiplier: 1.25    # Pressure boost when trend is "rising"
+  starvation_k: 0.005       # Pressure bonus per second of waiting time
+
+# ── Congestion predictor ─────────────────────────────────────────────
+prediction:
+  n_estimators: 200
+  max_depth: 5
+  learning_rate: 0.05
+  min_train_frames: 100     # Accumulate N frames before first training
+  retrain_every: 500        # Retrain every N processed frames
+  model_path: output/congestion_model.joblib
+
+# ── Lane definitions ─────────────────────────────────────────────────
+# Each lane is a list of (x, y) vertices (image coordinates, pixels).
+# Leave empty → full-frame single lane is used automatically.
+lanes: []
+# Example with 2 lanes on a 1280×720 video:
+# lanes:
+#   - name: "Lane 1 (Inbound)"
+#     polygon: [[0, 0], [640, 0], [640, 720], [0, 720]]
+#   - name: "Lane 2 (Outbound)"
+#     polygon: [[640, 0], [1280, 0], [1280, 720], [640, 720]]
+
+# ── Output ───────────────────────────────────────────────────────────
+output:
+  dir: output/
+  save_annotated: true
+  display: false            # Show cv2 window (requires display)
+  log_level: INFO           # DEBUG / INFO / WARNING / ERROR
