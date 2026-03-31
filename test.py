@@ -394,6 +394,7 @@ class TestUtils:
         assert result.is_dir()
 
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -426,3 +427,207 @@ def _make_mock_model(num_detections: int = 0):
 
     mock_model.return_value = [prediction]
     return mock_model
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config + pipeline_from_config
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestConfigLoading:
+    def test_load_config_returns_dict(self):
+        from src.utils import load_config
+        cfg = load_config()
+        assert isinstance(cfg, dict)
+        assert "model" in cfg
+        assert "detection" in cfg
+        assert "density_thresholds" in cfg
+        assert "signal" in cfg
+        assert "prediction" in cfg
+
+    def test_load_config_model_name(self):
+        from src.utils import load_config
+        cfg = load_config()
+        assert cfg["model"]["name"] == "yolov8n.pt"
+
+    def test_load_config_missing_file(self, tmp_path):
+        from src.utils import load_config
+        with pytest.raises(FileNotFoundError):
+            load_config(tmp_path / "nonexistent.yaml")
+
+    def test_pipeline_from_config_creates_pipeline(self):
+        from src.pipeline import pipeline_from_config
+        pipeline = pipeline_from_config(source=0)
+        assert pipeline is not None
+        assert pipeline.config is not None
+        assert pipeline.config.model_name == "yolov8n.pt"
+        assert pipeline.config.confidence_threshold == 0.40
+        assert pipeline.config.cycle_time_s == 120
+
+    def test_pipeline_from_config_reads_all_sections(self):
+        from src.pipeline import pipeline_from_config
+        pipeline = pipeline_from_config(source="dummy.mp4")
+        cfg = pipeline.config
+        # Detection
+        assert cfg.confidence_threshold == 0.40
+        assert cfg.iou_threshold == 0.45
+        assert cfg.frame_skip == 1
+        assert cfg.inference_size == 640
+        # Tracking
+        assert cfg.tracker_max_age == 5
+        assert cfg.tracker_min_hits == 3
+        assert cfg.tracker_iou == 0.30
+        # Density
+        assert cfg.ema_alpha == 0.20
+        assert cfg.low_threshold == 10
+        assert cfg.high_threshold == 25
+        # Signal
+        assert cfg.min_green_s == 10
+        assert cfg.max_green_s == 90
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-camera
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestMultiCamera:
+    def test_manager_creation(self):
+        from src.multi_camera import MultiCameraManager, CameraSource
+        cameras = [
+            CameraSource("Cam A", "video_a.mp4"),
+            CameraSource("Cam B", "video_b.mp4"),
+        ]
+        mgr = MultiCameraManager(cameras)
+        assert mgr.camera_names == ["Cam A", "Cam B"]
+
+    def test_empty_cameras_raises(self):
+        from src.multi_camera import MultiCameraManager
+        with pytest.raises(ValueError):
+            MultiCameraManager([])
+
+    def test_system_summary_initial(self):
+        from src.multi_camera import MultiCameraManager, CameraSource
+        cameras = [CameraSource("Cam A", "v.mp4")]
+        mgr = MultiCameraManager(cameras)
+        summary = mgr.system_summary()
+        assert summary.total_cameras == 1
+        assert summary.total_vehicles == 0
+        assert summary.system_status == "Normal"
+
+    def test_get_snapshot_returns_default(self):
+        from src.multi_camera import MultiCameraManager, CameraSource
+        cameras = [CameraSource("Cam A", "v.mp4")]
+        mgr = MultiCameraManager(cameras)
+        snap = mgr.get_snapshot("Cam A")
+        assert snap.camera_name == "Cam A"
+        assert snap.total_vehicles == 0
+
+    def test_comparative_table_returns_list(self):
+        from src.multi_camera import MultiCameraManager, CameraSource
+        cameras = [
+            CameraSource("Cam A", "a.mp4"),
+            CameraSource("Cam B", "b.mp4"),
+        ]
+        mgr = MultiCameraManager(cameras)
+        table = mgr.comparative_table()
+        assert len(table) == 2
+        assert table[0]["Camera"] == "Cam A"
+
+    def test_reset_clears_snapshot(self):
+        from src.multi_camera import MultiCameraManager, CameraSource
+        cameras = [CameraSource("Cam A", "v.mp4")]
+        mgr = MultiCameraManager(cameras)
+        mgr.reset("Cam A")
+        snap = mgr.get_snapshot("Cam A")
+        assert snap.total_vehicles == 0
+
+    def test_unknown_camera_raises(self):
+        from src.multi_camera import MultiCameraManager, CameraSource
+        mgr = MultiCameraManager([CameraSource("Cam A", "v.mp4")])
+        with pytest.raises(KeyError):
+            mgr.get_pipeline("Unknown")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Synthetic video generator
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSyntheticVideo:
+    def test_generate_video_creates_file(self, tmp_path):
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
+        from generate_synthetic_video import generate_video
+
+        out = tmp_path / "test_video.mp4"
+        result = generate_video(
+            output_path=str(out),
+            width=320, height=240,
+            fps=10, duration_s=1,
+            num_lanes=2, spawn_rate=0.1,
+        )
+        assert out.is_file()
+        assert out.stat().st_size > 0
+
+    def test_generate_video_correct_frames(self, tmp_path):
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
+        from generate_synthetic_video import generate_video
+        import cv2
+
+        out = tmp_path / "test_count.mp4"
+        generate_video(
+            output_path=str(out),
+            width=320, height=240,
+            fps=10, duration_s=2,
+            num_lanes=2,
+        )
+        cap = cv2.VideoCapture(str(out))
+        count = 0
+        while cap.read()[0]:
+            count += 1
+        cap.release()
+        assert count == 20  # 10fps * 2s
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Integration: full pipeline smoke test
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPipelineIntegration:
+    def test_pipeline_process_frame_with_mock(self):
+        """Smoke test: process a blank frame through the pipeline with a mock model."""
+        from src.pipeline import TrafficPipeline, PipelineConfig
+
+        cfg = PipelineConfig(
+            model_name="yolov8n.pt",
+            save_annotated=False,
+            display=False,
+        )
+
+        pipeline = TrafficPipeline(source=0, config=cfg)
+
+        # Manually inject a mock model to avoid downloading YOLO weights
+        mock_model = _make_mock_model(num_detections=3)
+        pipeline._model = mock_model
+
+        # Manually trigger setup with known frame size
+        from src.density_analyzer import make_full_frame_lane
+        from src.tracker import SORTTracker, KalmanBoxTracker
+        from src.density_analyzer import DensityAnalyzer
+        from src.signal_optimizer import SignalOptimizer
+
+        KalmanBoxTracker.count = 0
+        pipeline._lanes = [make_full_frame_lane(640, 480)]
+        pipeline._tracker = SORTTracker()
+        pipeline._density = DensityAnalyzer(pipeline._lanes)
+        pipeline._optimizer = SignalOptimizer()
+
+        # Process a blank frame
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = pipeline.process_frame(frame)
+
+        assert result is not None
+        assert result.frame_idx == 0
+        assert isinstance(result.tracks, list)
+        assert result.density is not None
+        assert result.annotated_frame is not None
+        assert "total_vehicles" in result.metrics

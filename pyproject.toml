@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-traffic-intelligence"
+version = "0.1.0"
+description = "End-to-end intelligent traffic monitoring and decision-making system using Computer Vision and ML."
+authors = [
+    { name = "Karthik V", email = "karthik@example.com" }
+]
+readme = "Readme.md"
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0.0",
+    "ultralytics>=8.0.0",
+    "opencv-python>=4.7.0",
+    "numpy>=1.23.0",
+    "scipy>=1.10.0",
+    "scikit-learn>=1.2.0",
+    "pandas>=1.5.0",
+    "pyyaml>=6.0",
+    "joblib>=1.2.0",
+    "streamlit>=1.22.0",
+    "altair>=4.2.0",
+    "pillow>=9.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.3.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.3.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+]
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

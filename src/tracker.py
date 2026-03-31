@@ -136,7 +136,7 @@ def _xyxy_to_z(bbox: np.ndarray) -> np.ndarray:
 
 def _z_to_xyxy(x: np.ndarray) -> np.ndarray:
     """Convert state vector (cx,cy,s,r,…) → (x1,y1,x2,y2)."""
-    cx, cy, s, r = float(x[0]), float(x[1]), float(x[2]), float(x[3])
+    cx, cy, s, r = float(x[0, 0]), float(x[1, 0]), float(x[2, 0]), float(x[3, 0])
     if s <= 0:
         s = 1.0
     w = np.sqrt(s * abs(r))

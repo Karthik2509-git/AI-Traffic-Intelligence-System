@@ -2,3 +2,22 @@ venv/
 __pycache__/
 *.pyc
 output/
+*.log
+.env
+
+# Model weights (large binaries)
+*.pt
+*.onnx
+*.engine
+
+# Joblib serialised models
+*.joblib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

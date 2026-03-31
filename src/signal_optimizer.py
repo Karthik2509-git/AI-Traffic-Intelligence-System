@@ -274,7 +274,13 @@ class SignalOptimizer:
             if best_room > 0:
                 result[best_idx] += step
             else:
-                break  # can't rebalance further
+                # Fallback: ignore max limits if we MUST fill the target to avoid cycle shrinkage
+                if step > 0:
+                    result[0] += 1
+                else:
+                    # Should not happen given min_green_s * n <= cycle_time_s check
+                    result[0] -= 1
+
 
         return result
 
