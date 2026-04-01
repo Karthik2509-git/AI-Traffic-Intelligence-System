@@ -32,10 +32,10 @@ VEHICLE_CLASSES: frozenset[str] = frozenset({"car", "motorcycle", "bus", "truck"
 
 # BGR colours used when drawing bounding boxes for each vehicle class.
 CLASS_COLOURS: dict[str, tuple[int, int, int]] = {
-    "car":        (233, 180,  86),   # sky-blue
-    "motorcycle": (  0, 159, 230),   # orange
-    "bus":        (115, 158,   0),   # teal-green
-    "truck":      (  0,  94, 213),   # vermilion
+    "car":        (233, 180,  86),   # Sky-Blue
+    "motorcycle": (  0, 159, 230),   # Orange
+    "bus":        (115, 158,   0),   # Teal-Green
+    "truck":      (156,  79, 118),   # Purple (new distinct color)
 }
 
 DENSITY_THRESHOLDS: dict[str, int] = {"low": 10, "medium": 25}
@@ -136,10 +136,6 @@ def _draw_custom_boxes(
     return out
 
 
-# ---------------------------------------------------------------------------
-# Core detection routine
-# ---------------------------------------------------------------------------
-
 def run_tracking(
     model: YOLO,
     frame: np.ndarray,
@@ -162,6 +158,51 @@ def run_tracking(
         verbose   = False,
     )
     return results[0] if results else None
+
+
+
+def to_tracks(results: Any, names_map: dict[int, str]) -> list[Track]:
+    """
+    Convert ultralytics Results object into a list of internal Track objects.
+    
+    This is the bridge between SOTA tracking and our analytic modules.
+    """
+    from src.tracker import Track
+    
+    tracks = []
+    if results is None or results.boxes is None:
+        return tracks
+        
+    boxes = results.boxes
+    # ByteTrack provides .id (tracking IDs)
+    if boxes.id is None:
+        return tracks
+        
+    # Extract data
+    ids   = boxes.id.cpu().numpy().astype(int)
+    xyxy  = boxes.xyxy.cpu().numpy().astype(float)
+    confs = boxes.conf.cpu().numpy().astype(float)
+    clss  = boxes.cls.cpu().numpy().astype(int)
+    
+    for i in range(len(ids)):
+        cls_id = int(clss[i])
+        class_name = names_map.get(cls_id, "unknown")
+        
+        # Only include vehicle classes
+        if class_name not in VEHICLE_CLASSES:
+            continue
+            
+        tracks.append(Track(
+            track_id   = int(ids[i]),
+            bbox       = xyxy[i],
+            class_name = class_name,
+            confidence = float(confs[i]),
+            hit_streak = 5, # Mocked for downstream compatibility
+            age        = 5, # Mocked for downstream compatibility
+        ))
+        
+    return tracks
+
 
 
 def run_detection(

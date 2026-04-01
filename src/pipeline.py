@@ -35,7 +35,10 @@ import cv2
 import numpy as np
 
 from src.density_analyzer import DensityAnalyzer, FrameDensity, Lane, draw_lanes, make_full_frame_lane
-from src.detection import VEHICLE_CLASSES, CLASS_COLOURS, classify_density, load_model, _resolve_names, _draw_custom_boxes
+from src.detection import (
+    VEHICLE_CLASSES, CLASS_COLOURS, classify_density, load_model, 
+    _resolve_names, _draw_custom_boxes, run_tracking, to_tracks
+)
 from src.predictor import CongestionPredictor, build_feature_vector, frames_to_dataframe
 from src.signal_optimizer import LaneSignalInput, PhaseSchedule, SignalOptimizer
 from src.tracker import SORTTracker, Track
@@ -256,34 +259,20 @@ class TrafficPipeline:
             h, w = frame.shape[:2]
             self._setup(w, h)
 
-        # ── 1. YOLO detection ────────────────────────────────────────────
-        results = self._model(
-            frame,
-            conf    = cfg.confidence_threshold,
-            iou     = cfg.iou_threshold,
-            imgsz   = cfg.inference_size,
-            verbose = False,
+        # ── 1. Object detection & tracking (Native ByteTrack) ───────────
+        # Note: We use run_tracking which wraps model.track() for SOTA accuracy
+        results = run_tracking(
+            model                = self._model,
+            frame                = frame,
+            confidence_threshold = cfg.confidence_threshold,
+            iou_threshold        = cfg.iou_threshold,
+            inference_size       = cfg.inference_size,
         )
-        prediction = results[0]
-        names_map  = _resolve_names(prediction, self._model)
+        
+        # ── 2. Bridge to internal Track objects ──────────────────────────
+        names_map = self._model.names
+        tracks    = to_tracks(results, names_map)
 
-        detections: list[dict] = []
-        if prediction.boxes is not None and prediction.boxes.cls is not None:
-            cls_ids = prediction.boxes.cls.cpu().numpy().astype(int)
-            confs   = prediction.boxes.conf.cpu().numpy().astype(float)
-            xyxys   = prediction.boxes.xyxy.cpu().numpy()
-
-            for cls_id, conf, xyxy in zip(cls_ids, confs, xyxys):
-                name = names_map.get(int(cls_id), "")
-                if name in VEHICLE_CLASSES and conf >= cfg.confidence_threshold:
-                    detections.append({
-                        "bbox":       xyxy.tolist(),
-                        "class_name": name,
-                        "confidence": float(conf),
-                    })
-
-        # ── 2. Multi-object tracking ─────────────────────────────────────
-        tracks = self._tracker.update(detections)
 
         # ── 3. Density analysis ──────────────────────────────────────────
         density = self._density.update(tracks, timestamp_ms=timestamp_ms)
@@ -515,13 +504,18 @@ class TrafficPipeline:
                 continue
             x1, y1, x2, y2 = map(int, track.bbox)
             
-            # Use class-specific colour for the box
-            colour = CLASS_COLOURS.get(track.class_name, (180, 180, 180))
-
-            # Speed violation gets red box (overrides class colour)
+            # Determine status-based colour
             sp = speed_map.get(track.track_id)
-            if sp and sp.is_violation:
-                colour = (0, 0, 255)
+            
+            # Use class-specific default
+            colour = CLASS_COLOURS.get(track.class_name, (180, 180, 180))
+            
+            # Status overrides (Speeding = Red, Stopped = Yellow)
+            if sp:
+                if sp.is_violation:
+                    colour = (0, 0, 255)      # Red for CRITICAL speed
+                elif sp.speed_class == "stopped":
+                    colour = (0, 215, 255)    # Golden-Yellow for INCIDENT/STOPPED
 
             cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2)
             
@@ -529,11 +523,13 @@ class TrafficPipeline:
             label = f"#{track.track_id} {track.class_name}"
             if sp:
                 label += f" {sp.speed_kmh:.0f}km/h"
+                if sp.speed_class == "stopped": label += " [STOPPED]"
                 
             (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(out, (x1, y1 - lh - baseline - 4), (x1 + lw + 4, y1), colour, -1)
             cv2.putText(out, label, (x1 + 2, y1 - baseline - 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
 
         # HUD overlay
         self._draw_hud(out, density, schedule)
