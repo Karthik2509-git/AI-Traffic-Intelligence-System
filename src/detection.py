@@ -32,10 +32,10 @@ VEHICLE_CLASSES: frozenset[str] = frozenset({"car", "motorcycle", "bus", "truck"
 
 # BGR colours used when drawing bounding boxes for each vehicle class.
 CLASS_COLOURS: dict[str, tuple[int, int, int]] = {
-    "car":        (86,  180, 233),   # sky-blue
-    "motorcycle": (230, 159,  0),    # orange
-    "bus":        ( 0,  158, 115),   # teal-green
-    "truck":      (213,  94,  0),    # vermilion
+    "car":        (233, 180,  86),   # sky-blue
+    "motorcycle": (  0, 159, 230),   # orange
+    "bus":        (115, 158,   0),   # teal-green
+    "truck":      (  0,  94, 213),   # vermilion
 }
 
 DENSITY_THRESHOLDS: dict[str, int] = {"low": 10, "medium": 25}

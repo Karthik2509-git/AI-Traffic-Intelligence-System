@@ -232,12 +232,16 @@ beast_mode = st.sidebar.toggle(
     "🦁 Beast-Accuracy Mode",
     value=False,
     key="beast_mode_toggle",
-    help="Increases resolution to 1280px for ultimate precision (Best classification).",
+    help="Increases resolution to 1280px and auto-selects the Large model for ultimate precision.",
 )
 
-if edge_mode and beast_mode:
+if beast_mode:
+    # Force Beast settings
+    model_choice = "yolov8l.pt"
+    st.sidebar.info("🦁 **BEAST MODE ACTIVE**: High-Res Large model enabled.")
+
+if "edge_mode_toggle" in st.session_state and st.session_state.edge_mode_toggle and beast_mode:
     st.sidebar.warning("⚠️ Edge and Beast modes are mutually exclusive. Disabling Edge mode.")
-    # In practice, session_state logic handles this but visual warning helps
 
 
 cycle_time = st.sidebar.number_input(
@@ -307,6 +311,13 @@ status_box   = col_status.empty()
 total_box    = col_total.empty()
 density_box  = col_density.empty()
 cong_box     = col_cong.empty()
+
+if st.session_state.get("beast_mode_toggle", False):
+    st.markdown("""
+    <div style='background-color:rgba(213, 94, 0, 0.1); padding:10px; border-radius:5px; border:1px solid #d55e00; margin-bottom:20px; text-align:center;'>
+        <h3 style='color:#d55e00; margin:0;'>🦁 MODE: BEAST TIER (MAX ACCURACY)</h3>
+    </div>
+    """, unsafe_allow_html=True)
 
 tab_live, tab_trend, tab_signal, tab_heatmap, tab_anomaly, tab_speed, tab_perf, tab_multi, tab_history = st.tabs(
     ["📸 Live Detection", "📈 Trends", "🚦 Signal", "🔥 Heatmap",

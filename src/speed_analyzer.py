@@ -143,9 +143,16 @@ class SpeedAnalyzer:
                 speed_kmh = speed_ms * 3.6
 
                 # --- NEW: Outlier Rejection ---
-                # If speed is physically impossible, assume it's a tracking jump and skip update
+                # 1. Physical impossiblity check
                 if speed_kmh > self.cfg.max_physical_speed:
-                    logger.debug("Speed outlier rejected for #%d: %.1f km/h", tid, speed_kmh)
+                    logger.debug("Speed outlier rejected (physically impossible) for #%d: %.1f km/h", tid, speed_kmh)
+                    state["prev_center"] = (cx, cy)
+                    continue
+
+                # 2. Acceleration check (sudden jumps)
+                prev_speed = state.get("speed_ema", 0.0)
+                if state["hits"] > self.cfg.min_speed_frames and abs(speed_kmh - prev_speed) > 40:
+                    logger.debug("Speed outlier rejected (acceleration spike) for #%d: %.1f km/h", tid, speed_kmh)
                     state["prev_center"] = (cx, cy)
                     continue
 
