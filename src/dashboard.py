@@ -42,6 +42,10 @@ from src.density_analyzer import make_full_frame_lane, FrameDensity
 from src.predictor import CongestionPredictor, PredictionResult, build_feature_vector
 from src.signal_optimizer import SignalOptimizer, LaneSignalInput
 from src.multi_camera import MultiCameraManager, CameraSource
+from src.database import TrafficDatabase
+from src.heatmap import HeatmapGenerator
+from src.anomaly_detector import AnomalyDetector, AnomalyConfig
+from src.speed_analyzer import SpeedAnalyzer
 from src.utils import get_project_root, get_logger, load_config
 
 logger = get_logger(__name__)
@@ -83,14 +87,14 @@ st.set_page_config(
 st.sidebar.title("🚦 Traffic Intelligence")
 st.sidebar.markdown("---")
 
-_model_options = ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt"]
+_model_options = _cfg_model.get("available_models", ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt"])
 _model_index   = _model_options.index(_default_model) if _default_model in _model_options else 0
 
 model_choice = st.sidebar.selectbox(
-    "YOLO Model",
+    "🧠 YOLO Model",
     options=_model_options,
     index=_model_index,
-    help="Larger models -> higher accuracy, slower inference.",
+    help="Nano (Fast) → Extra Large (Highest Accuracy). Try 'Medium' or 'Large' for better tracking.",
 )
 
 conf_threshold = st.sidebar.slider(
@@ -109,7 +113,24 @@ cycle_time = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Input Source**")
+st.sidebar.subheader("⚖️ System Calibration")
+
+_default_pxm = _cfg_speed.get("pixels_per_meter", 8.0)
+_default_limit = _cfg_speed.get("speed_limit_kmh", 80.0)
+
+px_per_m = st.sidebar.slider(
+    "Pixels Per Meter", min_value=1.0, max_value=60.0,
+    value=float(_default_pxm), step=0.5,
+    help="Adjust this until the 'Avg Speed' in the dashboard looks realistic for your camera angle.",
+)
+
+speed_limit = st.sidebar.slider(
+    "Speed Limit (km/h)", min_value=10, max_value=140,
+    value=int(_default_limit), step=5,
+    help="Threshold for alerting and highlighting vehicles in red.",
+)
+
+st.sidebar.markdown("---")
 
 input_mode = st.sidebar.radio(
     "Mode", ["Image", "Video"], index=0, horizontal=True,
@@ -155,8 +176,9 @@ total_box    = col_total.empty()
 density_box  = col_density.empty()
 cong_box     = col_cong.empty()
 
-tab_live, tab_trend, tab_signal, tab_perf, tab_multi = st.tabs(
-    ["📸 Live Detection", "📈 Trend & Analytics", "🚦 Signal Optimizer", "⚡ Performance", "📹 Multi-Camera"]
+tab_live, tab_trend, tab_signal, tab_heatmap, tab_anomaly, tab_speed, tab_perf, tab_multi, tab_history = st.tabs(
+    ["📸 Live Detection", "📈 Trends", "🚦 Signal", "🔥 Heatmap",
+     "🚨 Anomalies", "⚡ Speed", "⏱ Performance", "📹 Multi-Cam", "💾 History"]
 )
 
 # ---------------------------------------------------------------------------
@@ -169,10 +191,12 @@ with tab_live:
     with col_img:
         st.subheader("Annotated Output")
         img_placeholder = st.empty()
+        download_ph = st.empty()  # Placeholder for download button
 
     with col_breakdown:
         st.subheader("Vehicle Breakdown")
         breakdown_chart = st.empty()
+        breakdown_export_ph = st.empty()  # Placeholder for quick export
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +250,58 @@ with tab_multi:
     multi_summary_ph = st.empty()
     multi_table_ph   = st.empty()
     multi_chart_ph   = st.empty()
+
+
+# ---------------------------------------------------------------------------
+# Tab: Heatmap
+# ---------------------------------------------------------------------------
+
+with tab_heatmap:
+    st.subheader("🔥 Traffic Density Heatmap")
+    st.caption("Gaussian-kernel smoothed spatial density visualization showing vehicle concentration hotspots.")
+    heatmap_img_ph = st.empty()
+    heatmap_info_ph = st.empty()
+
+
+# ---------------------------------------------------------------------------
+# Tab: Anomaly Detection
+# ---------------------------------------------------------------------------
+
+with tab_anomaly:
+    st.subheader("🚨 Traffic Anomaly Detection")
+    st.caption("Real-time statistical anomaly detection: spikes, drops, congestion surges, and trend reversals.")
+    anomaly_summary_ph = st.empty()
+    anomaly_table_ph = st.empty()
+    anomaly_timeline_ph = st.empty()
+
+
+# ---------------------------------------------------------------------------
+# Tab: Speed Analytics
+# ---------------------------------------------------------------------------
+
+with tab_speed:
+    st.subheader("⚡ Vehicle Speed Analytics")
+    
+    st.markdown(f"""
+> **Calibration Status:** 
+> - **Pixels/Meter:** `{px_per_m}` | **Speed Limit:** `{speed_limit} km/h`
+> - **Detection Accuracy:** `{model_choice}` @ `{_get_inference_size()}px`
+""")
+    speed_summary_ph = st.empty()
+    speed_dist_ph = st.empty()
+    speed_detail_ph = st.empty()
+
+
+# ---------------------------------------------------------------------------
+# Tab: History (Database)
+# ---------------------------------------------------------------------------
+
+with tab_history:
+    st.subheader("💾 Session History & Data Export")
+    st.caption("Browse past analysis sessions and export data for offline analysis.")
+    history_sessions_ph = st.empty()
+    history_summary_ph = st.empty()
+    history_export_ph = st.empty()
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +419,11 @@ def _run_edge_benchmark(image_path: Path) -> dict:
     }
 
 
-def _process_video(video_path: Path, max_frames: int = 90) -> list[dict]:
+def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: int = 90) -> list[dict]:
     """Process a video with TrafficPipeline and return per-frame metrics."""
+    cfg_raw = load_config()
+    speed_cfg = cfg_raw.get("speed", {})
+    
     cfg = PipelineConfig(
         model_name=model_choice,
         confidence_threshold=conf_threshold,
@@ -352,10 +431,29 @@ def _process_video(video_path: Path, max_frames: int = 90) -> list[dict]:
         frame_skip=2,
         save_annotated=False,
         display=False,
+        cycle_time_s=int(cycle_time),
     )
+    # Manually update config sections for the pipeline
+    cfg_full = cfg_raw.copy()
+    cfg_full.update({
+        "speed": {
+            "pixels_per_meter": px_per_m,
+            "speed_limit_kmh": speed_limit,
+            "max_physical_speed": speed_cfg.get("max_physical_speed", 220.0),
+            "min_speed_frames": speed_cfg.get("min_speed_frames", 5),
+        }
+    })
+    
     pipeline = TrafficPipeline(source=str(video_path), config=cfg)
+    pipeline.config = cfg # Update to ensure latest values if not already used
+    
+    # Force override SpeedAnalyzer config with UI values
+    if pipeline._speed:
+        pipeline._speed.cfg.pixels_per_meter = px_per_m
+        pipeline._speed.cfg.speed_limit_kmh = speed_limit
 
     results = []
+    all_anomalies = []
     progress = st.progress(0, text="Processing video...")
     frame_count = 0
 
@@ -368,12 +466,27 @@ def _process_video(video_path: Path, max_frames: int = 90) -> list[dict]:
         metrics["frame_idx"] = result.frame_idx
         results.append(metrics)
 
+        # Collect anomalies
+        if "anomalies" in metrics:
+            all_anomalies.extend(metrics["anomalies"])
+
+        # Stream frame to dashboard
+        if img_placeholder is not None:
+            frame_rgb = cv2.cvtColor(result.annotated_frame, cv2.COLOR_BGR2RGB)
+            img_placeholder.image(frame_rgb, use_container_width=True)
+
         progress.progress(
             min(frame_count / max_frames, 1.0),
             text=f"Frame {frame_count}/{max_frames} | Vehicles: {metrics.get('total_vehicles', 0)} | Density: {metrics.get('density_label', '?')}",
         )
 
     progress.empty()
+
+    # Store heatmap and anomalies in session state
+    if pipeline._heatmap is not None:
+        st.session_state["last_heatmap"] = pipeline._heatmap.render()
+    st.session_state["last_anomalies"] = all_anomalies
+
     return results
 
 
@@ -732,6 +845,186 @@ def _update_multi_camera(image_path: Path) -> None:
 """)
 
 
+def _update_heatmap_tab(video_results: list[dict]) -> None:
+    """Display the heatmap from video processing."""
+    heatmap_data = st.session_state.get("last_heatmap")
+    if heatmap_data is not None:
+        # Convert BGR to RGB for Streamlit display
+        heatmap_rgb = cv2.cvtColor(heatmap_data, cv2.COLOR_BGR2RGB)
+        heatmap_img_ph.image(heatmap_rgb, caption="Traffic Density Heatmap", use_container_width=True)
+        heatmap_info_ph.info(
+            f"Heatmap generated from {len(video_results)} frames. "
+            f"Red = high concentration, Blue = low concentration."
+        )
+    else:
+        heatmap_img_ph.info("📹 Upload and process a video to generate a traffic heatmap.")
+
+
+def _update_anomaly_tab(video_results: list[dict]) -> None:
+    """Display anomaly detection results."""
+    anomalies = st.session_state.get("last_anomalies", [])
+
+    if not anomalies:
+        anomaly_summary_ph.success("✅ No anomalies detected during this session.")
+        return
+
+    # Summary
+    severity_counts = {}
+    type_counts = {}
+    for a in anomalies:
+        sev = a.get("severity", "info")
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+        atype = a.get("anomaly_type", "unknown")
+        type_counts[atype] = type_counts.get(atype, 0) + 1
+
+    critical = severity_counts.get("critical", 0)
+    warnings = severity_counts.get("warning", 0)
+
+    if critical > 0:
+        anomaly_summary_ph.error(f"🔴 {critical} CRITICAL and {warnings} warning anomalies detected!")
+    elif warnings > 0:
+        anomaly_summary_ph.warning(f"🟡 {warnings} warning anomalies detected.")
+    else:
+        anomaly_summary_ph.info(f"ℹ️ {len(anomalies)} info-level events detected.")
+
+    # Table
+    df_anomalies = pd.DataFrame(anomalies)
+    if not df_anomalies.empty:
+        display_cols = [c for c in ["frame_idx", "anomaly_type", "severity", "description", "confidence"] if c in df_anomalies.columns]
+        anomaly_table_ph.dataframe(df_anomalies[display_cols], use_container_width=True, hide_index=True)
+
+    # Timeline chart
+    if "frame_idx" in df_anomalies.columns:
+        severity_color = {"critical": "#d62728", "warning": "#ff7f0e", "info": "#1f77b4"}
+        chart = (
+            alt.Chart(df_anomalies)
+            .mark_circle(size=100)
+            .encode(
+                x=alt.X("frame_idx:Q", title="Frame"),
+                y=alt.Y("anomaly_type:N", title="Type"),
+                color=alt.Color("severity:N",
+                    scale=alt.Scale(
+                        domain=["critical", "warning", "info"],
+                        range=["#d62728", "#ff7f0e", "#1f77b4"]
+                    )),
+                tooltip=["frame_idx", "anomaly_type", "severity", "description"],
+            )
+            .properties(height=200, title="Anomaly Timeline")
+        )
+        anomaly_timeline_ph.altair_chart(chart, use_container_width=True)
+
+
+def _update_speed_tab(video_results: list[dict]) -> None:
+    """Display speed analytics from video processing."""
+    if not video_results:
+        speed_summary_ph.info("📹 Upload and process a video to see speed analytics.")
+        return
+
+    speeds = [r.get("avg_speed_kmh", 0) for r in video_results if r.get("avg_speed_kmh")]
+    violations = sum(r.get("speed_violations", 0) for r in video_results)
+
+    if not speeds:
+        speed_summary_ph.info("No speed data available. Speed estimation requires multi-frame tracking.")
+        return
+
+    avg_speed = np.mean(speeds)
+    max_speed = max(r.get("max_speed_kmh", 0) for r in video_results)
+
+    col1, col2, col3 = speed_summary_ph.columns(3)
+    col1.metric("Avg Speed", f"{avg_speed:.1f} km/h")
+    col2.metric("Max Speed", f"{max_speed:.1f} km/h")
+    col3.metric("Violations", violations)
+
+    # Speed over frames
+    df_speed = pd.DataFrame([
+        {"frame_idx": r.get("frame_idx", i), "avg_speed_kmh": r.get("avg_speed_kmh", 0)}
+        for i, r in enumerate(video_results) if r.get("avg_speed_kmh")
+    ])
+    if not df_speed.empty:
+        chart = (
+            alt.Chart(df_speed)
+            .mark_line(color="#e377c2", point=False)
+            .encode(
+                x=alt.X("frame_idx:Q", title="Frame"),
+                y=alt.Y("avg_speed_kmh:Q", title="Avg Speed (km/h)"),
+                tooltip=["frame_idx", "avg_speed_kmh"],
+            )
+            .properties(height=220, title="Average Speed Over Frames")
+        )
+        speed_dist_ph.altair_chart(chart, use_container_width=True)
+
+    # Speed class distribution from last frame
+    last_dist = None
+    for r in reversed(video_results):
+        if r.get("speed_distribution"):
+            last_dist = r["speed_distribution"]
+            break
+    if last_dist:
+        df_cls = pd.DataFrame([
+            {"Speed Class": k, "Count": v} for k, v in last_dist.items()
+        ])
+        bar = (
+            alt.Chart(df_cls)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+            .encode(
+                x=alt.X("Speed Class:N", sort=["stopped", "slow", "normal", "fast", "speeding"]),
+                y=alt.Y("Count:Q"),
+                color=alt.Color("Speed Class:N",
+                    scale=alt.Scale(
+                        domain=["stopped", "slow", "normal", "fast", "speeding"],
+                        range=["#aec7e8", "#98df8a", "#ffbb78", "#ff9896", "#d62728"]
+                    ), legend=None),
+                tooltip=["Speed Class", "Count"],
+            )
+            .properties(height=200, title="Speed Class Distribution (Last Frame)")
+        )
+        speed_detail_ph.altair_chart(bar, use_container_width=True)
+
+
+def _update_history_tab() -> None:
+    """Display session history from the database."""
+    try:
+        db = TrafficDatabase()
+        sessions = db.list_sessions(limit=10)
+
+        if not sessions:
+            history_sessions_ph.info("No sessions recorded yet. Process a video to create data.")
+            return
+
+        df_sessions = pd.DataFrame(sessions)
+        history_sessions_ph.dataframe(df_sessions, use_container_width=True, hide_index=True)
+
+        # Show summary for the latest session
+        latest_sid = sessions[0]["session_id"]
+        summary = db.get_session_summary(latest_sid)
+
+        history_summary_ph.markdown(f"""
+### Latest Session: `{latest_sid}`
+
+| Metric | Value |
+|---|---|
+| Total Frames | **{summary.get('total_frames', 0)}** |
+| Avg Vehicles | **{summary.get('avg_vehicles', 0):.1f}** |
+| Peak Vehicles | **{summary.get('peak_vehicles', 0)}** |
+| Avg Congestion | **{summary.get('avg_congestion', 0):.1f}/100** |
+| Peak Congestion | **{summary.get('peak_congestion', 0):.1f}/100** |
+| Avg Latency | **{summary.get('avg_latency_ms', 0):.1f} ms** |
+| Anomalies | **{summary.get('anomaly_count', 0)}** |
+""")
+
+        # Export buttons
+        col_csv, col_json = history_export_ph.columns(2)
+        if col_csv.button("📥 Export CSV", key="export_csv"):
+            out_path = db.export_csv(latest_sid, ROOT / "output" / f"{latest_sid}.csv")
+            col_csv.success(f"Exported to `{out_path.name}`")
+        if col_json.button("📥 Export JSON", key="export_json"):
+            out_path = db.export_json(latest_sid, ROOT / "output" / f"{latest_sid}.json")
+            col_json.success(f"Exported to `{out_path.name}`")
+
+    except Exception as exc:
+        history_sessions_ph.warning(f"Database not available: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Trigger detection
 # ---------------------------------------------------------------------------
@@ -749,12 +1042,15 @@ if run_button or uploaded or uploaded_video:
                 with open(tmp_video, "wb") as f:
                     f.write(uploaded_video.read())
 
-                video_results = _process_video(tmp_video, max_frames=int(max_video_frames))
+                video_results = _process_video(
+                    tmp_video, 
+                    img_placeholder=img_placeholder, 
+                    max_frames=int(max_video_frames)
+                )
                 st.session_state.video_results = video_results
 
                 if video_results:
                     last = video_results[-1]
-                    # KPI from last frame
                     _update_kpi_cards({
                         "density": last.get("density_label", "Low"),
                         "total_vehicles": last.get("total_vehicles", 0),
@@ -762,6 +1058,9 @@ if run_button or uploaded or uploaded_video:
                     })
 
                     _update_video_trends(video_results)
+                    _update_heatmap_tab(video_results)
+                    _update_anomaly_tab(video_results)
+                    _update_speed_tab(video_results)
 
                     # Signal from average
                     avg_vehicles = int(np.mean([r.get("total_vehicles", 0) for r in video_results]))
@@ -816,12 +1115,35 @@ if run_button or uploaded or uploaded_video:
                 ann_path = Path(result.get("annotated_path", ""))
                 if ann_path.is_file():
                     img_placeholder.image(str(ann_path), use_container_width=True)
+                    
+                    # Add download button for the frame
+                    with open(ann_path, "rb") as f:
+                        download_ph.download_button(
+                            label="⬇️ Download Annotated Frame",
+                            data=f,
+                            file_name=f"traffic_check_{st.session_state.run_count}.jpg",
+                            mime="image/jpeg",
+                            use_container_width=True
+                        )
+
+                # Add quick export for current breakdown
+                if result.get("counts_per_class"):
+                    df_breakdown = pd.DataFrame([{"class": k, "count": v} for k, v in result["counts_per_class"].items()])
+                    csv = df_breakdown.to_csv(index=False).encode('utf-8')
+                    breakdown_export_ph.download_button(
+                        label="📄 Export Breakdown CSV",
+                        data=csv,
+                        file_name=f"breakdown_{st.session_state.run_count}.csv",
+                        mime='text/csv',
+                        use_container_width=True
+                    )
 
                 _update_breakdown(result.get("counts_per_class", {}))
                 _update_trends()
                 _update_signal_real(result)
                 _update_performance_real(img_path, result["processing_time_ms"])
                 _update_multi_camera(img_path)
+                _update_history_tab()
 
                 st.success(
                     f"Detection complete: {result['total_vehicles']} vehicles "

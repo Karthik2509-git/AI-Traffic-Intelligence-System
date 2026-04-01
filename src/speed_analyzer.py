@@ -50,14 +50,16 @@ class VehicleSpeedInfo:
 @dataclass
 class SpeedConfig:
     """Configuration for speed estimation."""
-    pixels_per_meter: float = 8.0       # calibration factor
-    ema_alpha:        float = 0.3       # smoothing for speed updates
-    speed_limit_kmh:  float = 80.0      # speed limit for violation detection
+    pixels_per_meter:   float = 8.0       # calibration factor
+    ema_alpha:          float = 0.25      # smoothing for speed updates
+    speed_limit_kmh:    float = 80.0      # speed limit for violation detection
+    max_physical_speed: float = 220.0     # Ignore speeds > this (outlier rejection)
+    min_speed_frames:   int   = 5         # Wait for N frames before reporting speed
     # Speed class thresholds (km/h)
-    stopped_max:      float = 5.0
-    slow_max:         float = 30.0
-    normal_max:       float = 60.0
-    fast_max:         float = 80.0
+    stopped_max:        float = 5.0
+    slow_max:           float = 30.0
+    normal_max:         float = 60.0
+    fast_max:           float = 80.0
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +128,7 @@ class SpeedAnalyzer:
 
             if tid in self._track_state:
                 state = self._track_state[tid]
+                state["hits"] = state.get("hits", 0) + 1
                 prev_cx, prev_cy = state["prev_center"]
 
                 # Pixel displacement
@@ -137,6 +140,20 @@ class SpeedAnalyzer:
                 dist_m = dist_px / self.cfg.pixels_per_meter
                 speed_ms = dist_m * self.fps
                 speed_kmh = speed_ms * 3.6
+
+                # --- NEW: Outlier Rejection ---
+                # If speed is physically impossible, assume it's a tracking jump and skip update
+                if speed_kmh > self.cfg.max_physical_speed:
+                    logger.debug("Speed outlier rejected for #%d: %.1f km/h", tid, speed_kmh)
+                    state["prev_center"] = (cx, cy)
+                    continue
+
+                # --- NEW: Minimum Track Age ---
+                # Don't report speed until the track is stable
+                if state["hits"] < self.cfg.min_speed_frames:
+                    state["prev_center"] = (cx, cy)
+                    state["speed_ema"] = speed_kmh  # seed the EMA
+                    continue
 
                 # EMA smoothing
                 prev_speed = state.get("speed_ema", speed_kmh)
@@ -173,6 +190,7 @@ class SpeedAnalyzer:
                     "prev_center": (cx, cy),
                     "speed_ema": 0.0,
                     "direction": 0.0,
+                    "hits": 1,
                 }
 
         # Prune stale tracks

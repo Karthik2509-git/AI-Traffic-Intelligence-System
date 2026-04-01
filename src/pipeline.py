@@ -35,11 +35,15 @@ import cv2
 import numpy as np
 
 from src.density_analyzer import DensityAnalyzer, FrameDensity, Lane, draw_lanes, make_full_frame_lane
-from src.detection import VEHICLE_CLASSES, classify_density, load_model, _resolve_names, _draw_custom_boxes
+from src.detection import VEHICLE_CLASSES, CLASS_COLOURS, classify_density, load_model, _resolve_names, _draw_custom_boxes
 from src.predictor import CongestionPredictor, build_feature_vector, frames_to_dataframe
 from src.signal_optimizer import LaneSignalInput, PhaseSchedule, SignalOptimizer
 from src.tracker import SORTTracker, Track
 from src.utils import FPSMeter, RollingBuffer, ensure_dir, get_logger
+from src.anomaly_detector import AnomalyDetector, AnomalyConfig, AnomalyEvent
+from src.speed_analyzer import SpeedAnalyzer, SpeedConfig, VehicleSpeedInfo
+from src.heatmap import HeatmapGenerator, HeatmapConfig
+from src.database import TrafficDatabase
 
 logger = get_logger(__name__)
 
@@ -135,6 +139,13 @@ class TrafficPipeline:
         self._fps_meter    = FPSMeter(window=30)
         self._count_buffer = RollingBuffer(maxlen=300)
 
+        # New modules
+        self._anomaly:     AnomalyDetector | None = None
+        self._speed:       SpeedAnalyzer | None   = None
+        self._heatmap:     HeatmapGenerator | None = None
+        self._database:    TrafficDatabase | None  = None
+        self._session_id:  str | None = None
+
         self._frame_count  = 0
         self._predictor_ready = False
 
@@ -185,6 +196,34 @@ class TrafficPipeline:
                 logger.info("Loaded pre-trained predictor from '%s'.", cfg.pretrained_model)
             except Exception as exc:
                 logger.warning("Could not load pre-trained model: %s", exc)
+
+        # ── Anomaly detector ─────────────────────────────────────────────
+        self._anomaly = AnomalyDetector()
+
+        # ── Speed analyzer ──────────────────────────────────────────────
+        self._speed = SpeedAnalyzer(
+            fps=30.0,
+            config=SpeedConfig(
+                pixels_per_meter   = cfg.get("speed", {}).get("pixels_per_meter", 8.0),
+                speed_limit_kmh    = cfg.get("speed", {}).get("speed_limit_kmh", 80.0),
+                max_physical_speed = cfg.get("speed", {}).get("max_physical_speed", 220.0),
+                min_speed_frames   = cfg.get("speed", {}).get("min_speed_frames", 5),
+            )
+        )
+
+        # ── Heatmap generator ───────────────────────────────────────────
+        self._heatmap = HeatmapGenerator(frame_shape=(frame_height, frame_width))
+
+        # ── Database ────────────────────────────────────────────────────
+        try:
+            self._database = TrafficDatabase()
+            self._session_id = self._database.start_session(
+                source=str(self.source),
+                config_hash=cfg.model_name,
+            )
+        except Exception as exc:
+            logger.warning("Database init failed (non-fatal): %s", exc)
+            self._database = None
 
         ensure_dir(cfg.output_dir)
         logger.info(
@@ -242,6 +281,17 @@ class TrafficPipeline:
         density = self._density.update(tracks, timestamp_ms=timestamp_ms)
         self._count_buffer.push(density.total_count)
 
+        # ── 3b. Speed analysis ───────────────────────────────────────────
+        speed_results: list[VehicleSpeedInfo] = []
+        speed_summary: dict = {}
+        if self._speed is not None:
+            speed_results = self._speed.update(tracks)
+            speed_summary = self._speed.get_summary(speed_results)
+
+        # ── 3c. Heatmap update ───────────────────────────────────────────
+        if self._heatmap is not None:
+            self._heatmap.update(tracks)
+
         # ── 4. Predictor training / inference ────────────────────────────
         schedule: PhaseSchedule | None = None
 
@@ -256,11 +306,48 @@ class TrafficPipeline:
             if self._predictor_ready:
                 schedule = self._run_optimizer(density)
 
-        # ── 5. Annotate frame ────────────────────────────────────────────
-        annotated = self._annotate(frame, tracks, density, schedule)
+        # ── 5. Anomaly detection ─────────────────────────────────────────
+        anomaly_events: list[AnomalyEvent] = []
+        if self._anomaly is not None:
+            anomaly_metrics = {
+                "total_vehicles":  density.total_count,
+                "congestion_score": density.congestion_score,
+                "flow_per_min":    self._density.flow_rate_per_minute(),
+                "trend":           self._density.trend(),
+                "ema_count":       density.ema_count,
+            }
+            if speed_summary:
+                anomaly_metrics["avg_speed_kmh"] = speed_summary.get("avg_speed_kmh", 0)
+            anomaly_events = self._anomaly.analyse(self._frame_count, anomaly_metrics)
+
+        # ── 6. Annotate frame ────────────────────────────────────────────
+        annotated = self._annotate(frame, tracks, density, schedule, speed_results)
 
         self._fps_meter.tick()
         self._frame_count += 1
+
+        metrics = self._build_metrics(density, schedule, speed_summary, anomaly_events)
+
+        # ── 7. Persist to database ───────────────────────────────────────
+        if self._database is not None and self._session_id:
+            try:
+                self._database.log_frame(self._session_id, self._frame_count - 1, metrics)
+                if schedule:
+                    for lane_out in schedule.lanes:
+                        self._database.log_signal(
+                            self._session_id, self._frame_count - 1,
+                            lane_out.lane_name, lane_out.green_time_s,
+                            cfg.cycle_time_s - lane_out.green_time_s,
+                            lane_out.pressure, lane_out.advisory,
+                        )
+                for evt in anomaly_events:
+                    self._database.log_anomaly(
+                        self._session_id, evt.event_id, evt.frame_idx,
+                        evt.anomaly_type, evt.severity, evt.description,
+                        evt.confidence, evt.metrics_snapshot,
+                    )
+            except Exception as exc:
+                logger.debug("DB write error (non-fatal): %s", exc)
 
         return FrameResult(
             frame_idx       = self._frame_count - 1,
@@ -269,7 +356,7 @@ class TrafficPipeline:
             density         = density,
             schedule        = schedule,
             annotated_frame = annotated,
-            metrics         = self._build_metrics(density, schedule),
+            metrics         = metrics,
         )
 
     # ------------------------------------------------------------------
@@ -290,6 +377,9 @@ class TrafficPipeline:
             raise IOError(f"Cannot open video source: '{self.source}'.")
 
         fps_source = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        if self._speed:
+            self._speed.fps = fps_source
+
         frame_idx  = 0
 
         try:
@@ -380,6 +470,7 @@ class TrafficPipeline:
         tracks:   list[Track],
         density:  FrameDensity,
         schedule: PhaseSchedule | None,
+        speed_results: list[VehicleSpeedInfo] | None = None,
     ) -> np.ndarray:
         """Compose the annotated output frame."""
         lane_labels = {
@@ -388,17 +479,36 @@ class TrafficPipeline:
         }
         out = draw_lanes(frame, self._lanes, lane_labels)
 
-        # Draw track boxes
-        density_colours = {"Low": (0, 200, 100), "Medium": (0, 170, 255), "High": (0, 0, 220)}
+        # Build speed lookup
+        speed_map: dict[int, VehicleSpeedInfo] = {}
+        if speed_results:
+            speed_map = {s.track_id: s for s in speed_results}
+
+        # Draw track boxes with optional speed label
         for track in tracks:
             if not track.confirmed:
                 continue
             x1, y1, x2, y2 = map(int, track.bbox)
-            colour = density_colours.get(density.density_label, (180, 180, 180))
+            
+            # Use class-specific colour for the box
+            colour = CLASS_COLOURS.get(track.class_name, (180, 180, 180))
+
+            # Speed violation gets red box (overrides class colour)
+            sp = speed_map.get(track.track_id)
+            if sp and sp.is_violation:
+                colour = (0, 0, 255)
+
             cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2)
+            
+            # Label strip (filled background for better readability)
             label = f"#{track.track_id} {track.class_name}"
-            cv2.putText(out, label, (x1, y1 - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1, cv2.LINE_AA)
+            if sp:
+                label += f" {sp.speed_kmh:.0f}km/h"
+                
+            (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(out, (x1, y1 - lh - baseline - 4), (x1 + lw + 4, y1), colour, -1)
+            cv2.putText(out, label, (x1 + 2, y1 - baseline - 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
         # HUD overlay
         self._draw_hud(out, density, schedule)
@@ -440,6 +550,8 @@ class TrafficPipeline:
         self,
         density:  FrameDensity,
         schedule: PhaseSchedule | None,
+        speed_summary: dict | None = None,
+        anomaly_events: list[AnomalyEvent] | None = None,
     ) -> dict[str, Any]:
         m: dict[str, Any] = {
             "frame":           self._frame_count,
@@ -451,11 +563,20 @@ class TrafficPipeline:
             "occupancy":       density.occupancy_ratio,
             "trend":           self._density.trend(),
             "flow_per_min":    round(self._density.flow_rate_per_minute(), 1),
+            "counts_per_class": density.counts_per_lane,
         }
         if schedule:
             m["signal_schedule"] = {
                 o.lane_name: o.green_time_s for o in schedule.lanes
             }
+        if speed_summary:
+            m["avg_speed_kmh"] = speed_summary.get("avg_speed_kmh", 0)
+            m["max_speed_kmh"] = speed_summary.get("max_speed_kmh", 0)
+            m["speed_violations"] = speed_summary.get("violations", 0)
+            m["speed_distribution"] = speed_summary.get("speed_distribution", {})
+        if anomaly_events:
+            m["anomalies"] = [e.to_dict() for e in anomaly_events]
+            m["anomaly_count"] = len(anomaly_events)
         return m
 
 

@@ -4,7 +4,13 @@
 
 # ── Model ───────────────────────────────────────────────────────────
 model:
-  name: yolov8n.pt          # Options: yolov8n / s / m / l / x
+  name: yolov8n.pt          # Default model. Nano is fast but least accurate.
+  available_models:         # Options: yolov8n / s / m / l / x
+    - yolov8n.pt
+    - yolov8s.pt
+    - yolov8m.pt
+    - yolov8l.pt
+    - yolov8x.pt
   edge_name: yolov8n.pt     # Used when edge_mode: true
   inference_size: 640       # Input resolution (px). 320 for edge.
   device: ""                # "" = auto (GPU if available), "cpu", "cuda:0"
@@ -98,8 +104,10 @@ anomaly:
 speed:
   enabled: true
   pixels_per_meter: 8.0     # Camera calibration factor (measure known distance)
-  ema_alpha: 0.3            # Smoothing factor for speed estimates
+  ema_alpha: 0.25           # Smoothing factor for speed estimates
   speed_limit_kmh: 80.0     # Speed limit for violation flagging
+  max_physical_speed: 220.0 # Outlier rejection threshold (ignore speeds > this)
+  min_speed_frames: 5       # Min frames tracked before reporting speed
   stopped_max_kmh: 5.0
   slow_max_kmh: 30.0
   normal_max_kmh: 60.0

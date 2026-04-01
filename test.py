@@ -941,20 +941,48 @@ class TestSpeedAnalyzer:
         results = sa.update(tracks)
         assert len(results) == 0  # no speed on first sighting
 
-    def test_speed_computed_on_second_frame(self):
+    def test_speed_computed_on_nth_frame(self):
+        """Should skip first 5 frames and report on the 6th frame (min_speed_frames=5)."""
         from src.speed_analyzer import SpeedAnalyzer
         sa = SpeedAnalyzer(fps=30.0)
         sa.update([self._make_track(1, 80, 80, 120, 120)])
-        # Vehicle moved 20px right
-        results = sa.update([self._make_track(1, 100, 80, 140, 120)])
-        assert len(results) == 1
-        assert results[0].speed_kmh > 0
+        
+        # Move car 10 pixels right per frame for 4 more frames (total 5 hits)
+        for i in range(1, 4):
+            sa.update([self._make_track(1, 80 + i*10, 80, 120 + i*10, 120)])
+            
+        # 5th hit (4th move) — still no speed because state["hits"] < min_speed_frames (5)
+        res = sa.update([self._make_track(1, 130, 80, 170, 120)])
+        assert len(res) == 0
+        
+        # 6th hit (5th move) — speed should finally be reported
+        res = sa.update([self._make_track(1, 140, 80, 180, 120)])
+        assert len(res) == 1
+        assert res[0].speed_kmh > 0
+
+    def test_speed_outlier_rejected(self):
+        """Should ignore physically impossible speeds (e.g. 1000 km/h)."""
+        from src.speed_analyzer import SpeedAnalyzer
+        sa = SpeedAnalyzer(fps=30.0)
+        sa.update([self._make_track(1, 80, 80, 120, 120)])
+        
+        # Massive jump (1000px displacement)
+        res = sa.update([self._make_track(1, 1080, 80, 1120, 120)])
+        assert len(res) == 0
 
     def test_stopped_vehicle(self):
+        """Should report ~0 km/h for static track after stabilization."""
         from src.speed_analyzer import SpeedAnalyzer
         sa = SpeedAnalyzer(fps=30.0)
         sa.update([self._make_track(1, 80, 80, 120, 120)])
-        results = sa.update([self._make_track(1, 80, 80, 120, 120)])
+        
+        # Stay still for 10 frames
+        results = []
+        for _ in range(10):
+            results = sa.update([self._make_track(1, 80, 80, 120, 120)])
+            
+        assert len(results) == 1
+        assert results[0].speed_kmh < 2.0
         assert results[0].speed_class == "stopped"
 
     def test_summary(self):
