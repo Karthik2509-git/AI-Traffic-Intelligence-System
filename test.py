@@ -942,21 +942,21 @@ class TestSpeedAnalyzer:
         assert len(results) == 0  # no speed on first sighting
 
     def test_speed_computed_on_nth_frame(self):
-        """Should skip first 5 frames and report on the 6th frame (min_speed_frames=5)."""
+        """Should skip first 8 frames and report on the 9th frame (min_speed_frames=8)."""
         from src.speed_analyzer import SpeedAnalyzer
         sa = SpeedAnalyzer(fps=30.0)
         sa.update([self._make_track(1, 80, 80, 120, 120)])
         
-        # Move car 10 pixels right per frame for 4 more frames (total 5 hits)
-        for i in range(1, 4):
+        # Move car 10 pixels right per frame for 7 more frames (total 8 hits)
+        for i in range(1, 7):
             sa.update([self._make_track(1, 80 + i*10, 80, 120 + i*10, 120)])
             
-        # 5th hit (4th move) — still no speed because state["hits"] < min_speed_frames (5)
-        res = sa.update([self._make_track(1, 130, 80, 170, 120)])
+        # 8th hit (7th move) — still no speed because state["hits"] < min_speed_frames (8)
+        res = sa.update([self._make_track(1, 160, 80, 200, 120)])
         assert len(res) == 0
         
-        # 6th hit (5th move) — speed should finally be reported
-        res = sa.update([self._make_track(1, 140, 80, 180, 120)])
+        # 9th hit (8th move) — speed should finally be reported
+        res = sa.update([self._make_track(1, 170, 80, 210, 120)])
         assert len(res) == 1
         assert res[0].speed_kmh > 0
 

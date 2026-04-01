@@ -140,6 +140,30 @@ def _draw_custom_boxes(
 # Core detection routine
 # ---------------------------------------------------------------------------
 
+def run_tracking(
+    model: YOLO,
+    frame: np.ndarray,
+    confidence_threshold: float = 0.40,
+    iou_threshold: float = 0.45,
+    inference_size: int = 640,
+    tracker_type: str = "bytetrack.yaml",
+) -> Any:
+    """
+    Run native SOTA tracking (ByteTrack) on a single frame.
+    Returns the Results object from ultralytics.
+    """
+    results = model.track(
+        source    = frame,
+        conf      = confidence_threshold,
+        iou       = iou_threshold,
+        imgsz     = inference_size,
+        tracker   = tracker_type,
+        persist   = True,
+        verbose   = False,
+    )
+    return results[0] if results else None
+
+
 def run_detection(
     model: YOLO,
     input_path: Path,

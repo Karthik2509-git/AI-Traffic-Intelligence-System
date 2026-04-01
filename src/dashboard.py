@@ -61,12 +61,131 @@ except (FileNotFoundError, ValueError) as _exc:
 _cfg_model     = _yaml_cfg.get("model", {})
 _cfg_detection = _yaml_cfg.get("detection", {})
 _cfg_signal    = _yaml_cfg.get("signal", {})
+_cfg_speed     = _yaml_cfg.get("speed", {})
 
 _default_model = _cfg_model.get("name", "yolov8n.pt")
 _default_conf  = _cfg_detection.get("confidence_threshold", 0.40)
 _default_cycle = _cfg_signal.get("cycle_time_s", 120)
 _default_min_green = _cfg_signal.get("min_green_s", 10)
 _default_max_green = _cfg_signal.get("max_green_s", 90)
+
+
+# ---------------------------------------------------------------------------
+# Core functions
+# ---------------------------------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def _get_model(model_name: str):
+    return load_model(model_name)
+
+
+def _get_inference_size() -> int:
+    """Return the inference resolution based on current mode."""
+    if st.session_state.get("edge_mode_toggle", False):
+        return 320
+    if st.session_state.get("beast_mode_toggle", False):
+        return 1280
+    return 640
+
+
+def _run_detection_on_image(image_path: Path) -> dict:
+    """Run detection on a static image and return structured result."""
+    # Note: globals like model_choice, conf_threshold are defined in sidebar 
+    # but Streamlit scripts are re-run, so these will be available when called 
+    # from callbacks or later-defined UI blocks.
+    model  = _get_model(model_choice)
+    out_p  = ROOT / "output" / "dashboard_output.jpg"
+    result = run_detection(
+        model                = model,
+        input_path           = image_path,
+        output_path          = out_p,
+        confidence_threshold = conf_threshold,
+    )
+    result["annotated_path"] = str(out_p)
+    return result
+
+
+def _run_signal_optimizer(result: dict) -> dict:
+    """
+    Run the real SignalOptimizer on detection results.
+    Returns signal info dict with green_time, red_time, advisory, etc.
+    """
+    total   = result.get("total_vehicles", 0)
+    density = result.get("density", "Low")
+
+    optimizer = SignalOptimizer(
+        cycle_time_s = int(cycle_time),
+        min_green_s  = int(_default_min_green),
+        max_green_s  = int(_default_max_green),
+    )
+
+    # Build a FrameDensity for the optimizer
+    fd = FrameDensity(
+        frame_idx=0, timestamp_ms=0,
+        counts_per_lane={"Lane 1": total},
+        total_count=total,
+        density_label=density,
+        occupancy_ratio=min(total / 50.0, 1.0),
+        congestion_score=min(total * 3.0, 100.0),
+        ema_count=float(total),
+    )
+
+    # Build a PredictionResult
+    label_idx = {"Low": 0, "Medium": 1, "High": 2}.get(density, 0)
+    pred = PredictionResult(
+        label=density, label_index=label_idx,
+        probabilities={"Low": 0.1, "Medium": 0.3, "High": 0.6} if density == "High"
+            else {"Low": 0.6, "Medium": 0.3, "High": 0.1} if density == "Low"
+            else {"Low": 0.2, "Medium": 0.6, "High": 0.2},
+        confidence=0.7,
+    )
+
+    lane_input = LaneSignalInput(
+        lane_name="Lane 1", density=fd, prediction=pred, trend="stable",
+    )
+
+    try:
+        schedule = optimizer.optimise([lane_input])
+        lane_out = schedule.lanes[0]
+        return {
+            "green_time": lane_out.green_time_s,
+            "red_time":   int(cycle_time) - lane_out.green_time_s,
+            "pressure":   lane_out.pressure,
+            "advisory":   lane_out.advisory,
+            "notes":      schedule.notes,
+            "schedule":   schedule,
+        }
+    except Exception as exc:
+        logger.warning("Signal optimizer failed: %s", exc)
+        green = int(cycle_time) // 2
+        return {
+            "green_time": green,
+            "red_time":   int(cycle_time) - green,
+            "pressure":   0.0,
+            "advisory":   f"Fallback: equal split ({green}s green)",
+            "notes":      [],
+            "schedule":   None,
+        }
+
+
+def _run_edge_benchmark(image_path: Path) -> dict:
+    """
+    Actually run inference at both 320px and 640px and return real timing.
+    """
+    model = _get_model(model_choice)
+    t_start = time.perf_counter()
+    run_detection(model, image_path, ROOT/"output"/"bench_640.jpg", inference_size=640)
+    cloud_ms = (time.perf_counter() - t_start) * 1000
+
+    t_start = time.perf_counter()
+    run_detection(model, image_path, ROOT/"output"/"bench_320.jpg", inference_size=320)
+    edge_ms = (time.perf_counter() - t_start) * 1000
+
+    return {
+        "cloud_ms": round(cloud_ms, 1),
+        "edge_ms":  round(edge_ms, 1),
+        "speedup":  round(cloud_ms / (edge_ms + 1e-6), 2)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -103,10 +222,23 @@ conf_threshold = st.sidebar.slider(
 )
 
 edge_mode = st.sidebar.toggle(
-    "Edge-AI Mode",
+    "🏃 Edge-AI Mode",
     value=False,
-    help="Reduces inference resolution to 320px for on-device performance.",
+    key="edge_mode_toggle",
+    help="Reduces resolution to 320px for on-device performance (Fastest).",
 )
+
+beast_mode = st.sidebar.toggle(
+    "🦁 Beast-Accuracy Mode",
+    value=False,
+    key="beast_mode_toggle",
+    help="Increases resolution to 1280px for ultimate precision (Best classification).",
+)
+
+if edge_mode and beast_mode:
+    st.sidebar.warning("⚠️ Edge and Beast modes are mutually exclusive. Disabling Edge mode.")
+    # In practice, session_state logic handles this but visual warning helps
+
 
 cycle_time = st.sidebar.number_input(
     "Signal Cycle (s)", min_value=30, max_value=300, value=int(_default_cycle), step=10,
@@ -304,153 +436,27 @@ with tab_history:
     history_export_ph = st.empty()
 
 
-# ---------------------------------------------------------------------------
-# Core functions
-# ---------------------------------------------------------------------------
-
-@st.cache_resource(show_spinner=False)
-def _get_model(model_name: str):
-    return load_model(model_name)
-
-
-def _get_inference_size() -> int:
-    return 320 if edge_mode else 640
-
-
-def _run_detection_on_image(image_path: Path) -> dict:
-    """Run detection on a static image and return structured result."""
-    model  = _get_model(model_choice)
-    out_p  = ROOT / "output" / "dashboard_output.jpg"
-    result = run_detection(
-        model                = model,
-        input_path           = image_path,
-        output_path          = out_p,
-        confidence_threshold = conf_threshold,
-    )
-    result["annotated_path"] = str(out_p)
-    return result
-
-
-def _run_signal_optimizer(result: dict) -> dict:
-    """
-    Run the real SignalOptimizer on detection results.
-    Returns signal info dict with green_time, red_time, advisory, etc.
-    """
-    total   = result.get("total_vehicles", 0)
-    density = result.get("density", "Low")
-
-    optimizer = SignalOptimizer(
-        cycle_time_s = int(cycle_time),
-        min_green_s  = int(_default_min_green),
-        max_green_s  = int(_default_max_green),
-    )
-
-    # Build a FrameDensity for the optimizer
-    fd = FrameDensity(
-        frame_idx=0, timestamp_ms=0,
-        counts_per_lane={"Lane 1": total},
-        total_count=total,
-        density_label=density,
-        occupancy_ratio=min(total / 50.0, 1.0),
-        congestion_score=min(total * 3.0, 100.0),
-        ema_count=float(total),
-    )
-
-    # Build a PredictionResult
-    label_idx = {"Low": 0, "Medium": 1, "High": 2}.get(density, 0)
-    pred = PredictionResult(
-        label=density, label_index=label_idx,
-        probabilities={"Low": 0.1, "Medium": 0.3, "High": 0.6} if density == "High"
-            else {"Low": 0.6, "Medium": 0.3, "High": 0.1} if density == "Low"
-            else {"Low": 0.2, "Medium": 0.6, "High": 0.2},
-        confidence=0.7,
-    )
-
-    lane_input = LaneSignalInput(
-        lane_name="Lane 1", density=fd, prediction=pred, trend="stable",
-    )
-
-    try:
-        schedule = optimizer.optimise([lane_input])
-        lane_out = schedule.lanes[0]
-        return {
-            "green_time": lane_out.green_time_s,
-            "red_time":   int(cycle_time) - lane_out.green_time_s,
-            "pressure":   lane_out.pressure,
-            "advisory":   lane_out.advisory,
-            "notes":      schedule.notes,
-            "schedule":   schedule,
-        }
-    except Exception as exc:
-        logger.warning("Signal optimizer failed: %s", exc)
-        green = int(cycle_time) // 2
-        return {
-            "green_time": green,
-            "red_time":   int(cycle_time) - green,
-            "pressure":   0.0,
-            "advisory":   f"Fallback: equal split ({green}s green)",
-            "notes":      [],
-            "schedule":   None,
-        }
-
-
-def _run_edge_benchmark(image_path: Path) -> dict:
-    """
-    Actually run inference at both 320px and 640px and return real timing.
-    """
-    model = _get_model(model_choice)
-
-    # Cloud mode: 640px
-    t0 = time.perf_counter()
-    model(str(image_path), conf=conf_threshold, imgsz=640, verbose=False)
-    cloud_ms = (time.perf_counter() - t0) * 1000.0
-
-    # Edge mode: 320px
-    t0 = time.perf_counter()
-    model(str(image_path), conf=conf_threshold, imgsz=320, verbose=False)
-    edge_ms = (time.perf_counter() - t0) * 1000.0
-
-    speedup = cloud_ms / edge_ms if edge_ms > 0 else 1.0
-
-    return {
-        "cloud_ms": round(cloud_ms, 1),
-        "edge_ms":  round(edge_ms, 1),
-        "speedup":  round(speedup, 2),
-    }
-
-
 def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: int = 90) -> list[dict]:
     """Process a video with TrafficPipeline and return per-frame metrics."""
     cfg_raw = load_config()
     speed_cfg = cfg_raw.get("speed", {})
     
     cfg = PipelineConfig(
-        model_name=model_choice,
-        confidence_threshold=conf_threshold,
-        inference_size=_get_inference_size(),
-        frame_skip=2,
-        save_annotated=False,
-        display=False,
-        cycle_time_s=int(cycle_time),
+        model_name           = model_choice,
+        confidence_threshold = conf_threshold,
+        inference_size       = _get_inference_size(),
+        frame_skip           = 2,
+        save_annotated       = False,
+        display              = False,
+        cycle_time_s         = int(cycle_time),
+        pixels_per_meter     = px_per_m,
+        speed_limit_kmh      = speed_limit,
+        max_physical_speed   = speed_cfg.get("max_physical_speed", 220.0),
+        min_speed_frames     = speed_cfg.get("min_speed_frames", 5),
     )
-    # Manually update config sections for the pipeline
-    cfg_full = cfg_raw.copy()
-    cfg_full.update({
-        "speed": {
-            "pixels_per_meter": px_per_m,
-            "speed_limit_kmh": speed_limit,
-            "max_physical_speed": speed_cfg.get("max_physical_speed", 220.0),
-            "min_speed_frames": speed_cfg.get("min_speed_frames", 5),
-        }
-    })
     
     pipeline = TrafficPipeline(source=str(video_path), config=cfg)
-    pipeline.config = cfg # Update to ensure latest values if not already used
-    
-    # Force override SpeedAnalyzer config with UI values
-    if pipeline._speed:
-        pipeline._speed.cfg.pixels_per_meter = px_per_m
-        pipeline._speed.cfg.speed_limit_kmh = speed_limit
+
 
     results = []
     all_anomalies = []

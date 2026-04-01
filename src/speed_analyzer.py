@@ -54,7 +54,8 @@ class SpeedConfig:
     ema_alpha:          float = 0.25      # smoothing for speed updates
     speed_limit_kmh:    float = 80.0      # speed limit for violation detection
     max_physical_speed: float = 220.0     # Ignore speeds > this (outlier rejection)
-    min_speed_frames:   int   = 5         # Wait for N frames before reporting speed
+    min_speed_frames:   int   = 8         # Wait for N frames before reporting speed
+    median_window:      int   = 10        # Window size for median filtering
     # Speed class thresholds (km/h)
     stopped_max:        float = 5.0
     slow_max:           float = 30.0
@@ -155,10 +156,21 @@ class SpeedAnalyzer:
                     state["speed_ema"] = speed_kmh  # seed the EMA
                     continue
 
-                # EMA smoothing
-                prev_speed = state.get("speed_ema", speed_kmh)
-                smoothed = (self.cfg.ema_alpha * speed_kmh
-                            + (1 - self.cfg.ema_alpha) * prev_speed)
+                # --- NEW: Median Filtering ---
+                # Maintain a history of raw speed measurements
+                if "speed_history" not in state:
+                    state["speed_history"] = []
+                state["speed_history"].append(speed_kmh)
+                if len(state["speed_history"]) > self.cfg.median_window:
+                    state["speed_history"].pop(0)
+                
+                # Compute median to reject outliers and spikes
+                median_speed = float(np.median(state["speed_history"]))
+                
+                # EMA smoothing on top of median for fluid display
+                prev_ema = state.get("speed_ema", median_speed)
+                smoothed = (self.cfg.ema_alpha * median_speed
+                            + (1 - self.cfg.ema_alpha) * prev_ema)
 
                 # Direction (in degrees, 0=up)
                 direction = math.degrees(math.atan2(dx, -dy)) % 360

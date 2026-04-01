@@ -83,6 +83,12 @@ class PipelineConfig:
     min_green_s:         int   = 10
     max_green_s:         int   = 90
 
+    # ── Speed ──────────────────────────────────────────────────────────
+    pixels_per_meter:    float = 8.0
+    speed_limit_kmh:     float = 80.0
+    max_physical_speed:  float = 220.0
+    min_speed_frames:    int   = 5
+
     # ── Output ─────────────────────────────────────────────────────────
     save_annotated:      bool  = True
     output_dir:          Path  = Path("output")
@@ -138,6 +144,10 @@ class TrafficPipeline:
         self._optimizer:   SignalOptimizer | None = None
         self._fps_meter    = FPSMeter(window=30)
         self._count_buffer = RollingBuffer(maxlen=300)
+        
+        # Tracking state (for age/hit_streak with ByteTrack)
+        self._track_history: dict[int, dict] = {} # id -> {age, hits}
+
 
         # New modules
         self._anomaly:     AnomalyDetector | None = None
@@ -167,11 +177,9 @@ class TrafficPipeline:
             logger.info("No lanes specified; using full-frame single lane.")
 
         # ── Tracker ─────────────────────────────────────────────────────
-        self._tracker = SORTTracker(
-            max_age       = cfg.tracker_max_age,
-            min_hits      = cfg.tracker_min_hits,
-            iou_threshold = cfg.tracker_iou,
-        )
+        # Now using native ByteTrack via detection.run_tracking()
+        self._tracker = None
+
 
         # ── Density analyser ────────────────────────────────────────────
         self._density = DensityAnalyzer(
@@ -204,10 +212,10 @@ class TrafficPipeline:
         self._speed = SpeedAnalyzer(
             fps=30.0,
             config=SpeedConfig(
-                pixels_per_meter   = cfg.get("speed", {}).get("pixels_per_meter", 8.0),
-                speed_limit_kmh    = cfg.get("speed", {}).get("speed_limit_kmh", 80.0),
-                max_physical_speed = cfg.get("speed", {}).get("max_physical_speed", 220.0),
-                min_speed_frames   = cfg.get("speed", {}).get("min_speed_frames", 5),
+                pixels_per_meter   = cfg.pixels_per_meter,
+                speed_limit_kmh    = cfg.speed_limit_kmh,
+                max_physical_speed = cfg.max_physical_speed,
+                min_speed_frames   = cfg.min_speed_frames,
             )
         )
 
@@ -644,6 +652,11 @@ def pipeline_from_config(
         save_annotated       = output_sec.get("save_annotated", True),
         output_dir           = Path(output_sec.get("dir", "output")),
         display              = output_sec.get("display", False),
+        # Speed
+        pixels_per_meter     = cfg_dict.get("speed", {}).get("pixels_per_meter", 8.0),
+        speed_limit_kmh      = cfg_dict.get("speed", {}).get("speed_limit_kmh", 80.0),
+        max_physical_speed   = cfg_dict.get("speed", {}).get("max_physical_speed", 220.0),
+        min_speed_frames     = cfg_dict.get("speed", {}).get("min_speed_frames", 5),
     )
 
     # ── Build Lane objects from YAML (if defined) ─────────────────────
