@@ -143,14 +143,19 @@ def run_tracking(
     iou_threshold: float = 0.45,
     inference_size: int = 640,
     tracker_type: str = "bytetrack.yaml",
+    min_motorcycle_conf: float = 0.25,
 ) -> Any:
     """
     Run native SOTA tracking (ByteTrack) on a single frame.
     Returns the Results object from ultralytics.
     """
+    # We run the internal model at the lowest common denominator
+    # to catch small objects, then refine in to_tracks()
+    run_conf = min(confidence_threshold, min_motorcycle_conf)
+    
     results = model.track(
         source    = frame,
-        conf      = confidence_threshold,
+        conf      = run_conf,
         iou       = iou_threshold,
         imgsz     = inference_size,
         tracker   = tracker_type,
@@ -161,7 +166,12 @@ def run_tracking(
 
 
 
-def to_tracks(results: Any, names_map: dict[int, str]) -> list[Track]:
+def to_tracks(
+    results: Any, 
+    names_map: dict[int, str],
+    confidence_threshold: float = 0.40,
+    min_motorcycle_conf: float = 0.25,
+) -> list[Track]:
     """
     Convert ultralytics Results object into a list of internal Track objects.
     
@@ -187,7 +197,14 @@ def to_tracks(results: Any, names_map: dict[int, str]) -> list[Track]:
     for i in range(len(ids)):
         cls_id = int(clss[i])
         class_name = names_map.get(cls_id, "unknown")
+        conf = float(confs[i])
         
+        # Class-specific confidence filtering
+        if class_name == "motorcycle":
+            if conf < min_motorcycle_conf: continue
+        else:
+            if conf < confidence_threshold: continue
+
         # Only include vehicle classes
         if class_name not in VEHICLE_CLASSES:
             continue
@@ -196,7 +213,7 @@ def to_tracks(results: Any, names_map: dict[int, str]) -> list[Track]:
             track_id   = int(ids[i]),
             bbox       = xyxy[i],
             class_name = class_name,
-            confidence = float(confs[i]),
+            confidence = conf,
             hit_streak = 5, # Mocked for downstream compatibility
             age        = 5, # Mocked for downstream compatibility
         ))

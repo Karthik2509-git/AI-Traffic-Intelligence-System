@@ -18,6 +18,7 @@ model:
 # ── Detection ───────────────────────────────────────────────────────
 detection:
   confidence_threshold: 0.40   # Min box confidence (0–1)
+  min_motorcycle_conf: 0.25    # Capture small/distant bikes in Beast Mode
   iou_threshold: 0.45          # NMS IoU overlap threshold
   frame_skip: 1                # Process every N-th frame (1 = all frames)
   vehicle_classes:
@@ -38,6 +39,7 @@ tracking:
   max_age: 5                # Frames a track survives without a match
   min_hits: 3               # Confirmations before reporting a track
   iou_threshold: 0.30       # Min IoU for detection–track association
+  classification_smooth_window: 10 # Frames to average for stable labels
 
 # ── Signal optimizer ────────────────────────────────────────────────
 signal:

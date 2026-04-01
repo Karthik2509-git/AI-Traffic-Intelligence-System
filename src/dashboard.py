@@ -60,6 +60,7 @@ except (FileNotFoundError, ValueError) as _exc:
 
 _cfg_model     = _yaml_cfg.get("model", {})
 _cfg_detection = _yaml_cfg.get("detection", {})
+_cfg_tracking  = _yaml_cfg.get("tracking", {})
 _cfg_signal    = _yaml_cfg.get("signal", {})
 _cfg_speed     = _yaml_cfg.get("speed", {})
 
@@ -247,6 +248,19 @@ if "edge_mode_toggle" in st.session_state and st.session_state.edge_mode_toggle 
 cycle_time = st.sidebar.number_input(
     "Signal Cycle (s)", min_value=30, max_value=300, value=int(_default_cycle), step=10,
 )
+
+with st.sidebar.expander("🛡️ Accuracy Refinement", expanded=False):
+    st.caption("Fine-tune detection for specific traffic scenarios.")
+    motorcycle_sens = st.slider(
+        "🏍️ Bike Sensitivity", 0.05, 0.50, 
+        value=float(_cfg_detection.get("min_motorcycle_conf", 0.25)),
+        help="Lower values detect smaller motorcycles in distant lanes."
+    )
+    smooth_window = st.slider(
+        "🧠 Label Smoothing", 1, 30, 
+        value=int(_cfg_tracking.get("classification_smooth_window", 10)),
+        help="Higher values prevent 'Van/Truck' classification flickering."
+    )
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚖️ System Calibration")
@@ -464,6 +478,8 @@ def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: in
         speed_limit_kmh      = speed_limit,
         max_physical_speed   = speed_cfg.get("max_physical_speed", 220.0),
         min_speed_frames     = speed_cfg.get("min_speed_frames", 5),
+        min_motorcycle_conf  = motorcycle_sens,
+        classification_smooth_window = int(smooth_window),
     )
     
     pipeline = TrafficPipeline(source=str(video_path), config=cfg)

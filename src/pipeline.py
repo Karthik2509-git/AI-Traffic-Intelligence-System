@@ -65,11 +65,13 @@ class PipelineConfig:
     iou_threshold:       float = 0.45
     frame_skip:          int   = 1          # process every N-th frame (1 = all)
     inference_size:      int   = 640        # YOLO input resolution
+    min_motorcycle_conf: float = 0.25       # capture far-away bikes
 
     # ── Tracking ───────────────────────────────────────────────────────
     tracker_max_age:     int   = 5
     tracker_min_hits:    int   = 3
     tracker_iou:         float = 0.30
+    classification_smooth_window: int = 10  # frames for stable labeling
 
     # ── Density ────────────────────────────────────────────────────────
     ema_alpha:           float = 0.20
@@ -150,6 +152,7 @@ class TrafficPipeline:
         
         # Tracking state (for age/hit_streak with ByteTrack)
         self._track_history: dict[int, dict] = {} # id -> {age, hits}
+        self._label_history: dict[int, list[str]] = {} # id -> [label1, label2...]
 
 
         # New modules
@@ -260,18 +263,42 @@ class TrafficPipeline:
             self._setup(w, h)
 
         # ── 1. Object detection & tracking (Native ByteTrack) ───────────
-        # Note: We use run_tracking which wraps model.track() for SOTA accuracy
         results = run_tracking(
             model                = self._model,
             frame                = frame,
             confidence_threshold = cfg.confidence_threshold,
             iou_threshold        = cfg.iou_threshold,
             inference_size       = cfg.inference_size,
+            min_motorcycle_conf  = cfg.min_motorcycle_conf,
         )
         
         # ── 2. Bridge to internal Track objects ──────────────────────────
         names_map = self._model.names
-        tracks    = to_tracks(results, names_map)
+        tracks    = to_tracks(
+            results              = results, 
+            names_map            = names_map,
+            confidence_threshold = cfg.confidence_threshold,
+            min_motorcycle_conf  = cfg.min_motorcycle_conf,
+        )
+        
+        # ── 2b. Temporal Label Consensus (Smoothing) ─────────────────────
+        from collections import Counter
+        for track in tracks:
+            tid = track.track_id
+            if tid not in self._label_history:
+                self._label_history[tid] = []
+            
+            # Record current observation
+            self._label_history[tid].append(track.class_name)
+            
+            # Keep only the last N frames
+            if len(self._label_history[tid]) > cfg.classification_smooth_window:
+                self._label_history[tid].pop(0)
+            
+            # Apply Majority Vote
+            counts = Counter(self._label_history[tid])
+            winner, _ = counts.most_common(1)[0]
+            track.class_name = winner
 
 
         # ── 3. Density analysis ──────────────────────────────────────────
