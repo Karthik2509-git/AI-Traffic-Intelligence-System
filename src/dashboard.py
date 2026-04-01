@@ -258,8 +258,18 @@ with st.sidebar.expander("🛡️ Accuracy Refinement", expanded=False):
     )
     smooth_window = st.slider(
         "🧠 Label Smoothing", 1, 30, 
-        value=int(_cfg_tracking.get("classification_smooth_window", 10)),
+        value=int(_cfg_tracking.get("classification_smooth_window", 15)),
         help="Higher values prevent 'Van/Truck' classification flickering."
+    )
+    weighted_vote = st.toggle(
+        "⚖️ Weighted Consensus",
+        value=bool(_cfg_tracking.get("weighted_smoothing", True)),
+        help="Gives high-confidence detections more weight in labeling."
+    )
+    hide_distant = st.toggle(
+        "🌫️ Hide Deep-Field Objects",
+        value=False,
+        help="If enabled, tiny or uncertain vehicles (gray boxes) are hidden."
     )
 
 st.sidebar.markdown("---")
@@ -480,6 +490,10 @@ def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: in
         min_speed_frames     = speed_cfg.get("min_speed_frames", 5),
         min_motorcycle_conf  = motorcycle_sens,
         classification_smooth_window = int(smooth_window),
+        weighted_smoothing   = weighted_vote,
+        industrial_conf_floor = float(_cfg_detection.get("industrial_conf_floor", 0.35)),
+        min_deep_field_area  = int(_cfg_detection.get("min_deep_field_area", 800)),
+        hide_distant_objects = hide_distant,
     )
     
     pipeline = TrafficPipeline(source=str(video_path), config=cfg)
@@ -497,6 +511,8 @@ def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: in
 
         metrics = result.metrics
         metrics["frame_idx"] = result.frame_idx
+        
+        # Tracks are already filtered by the pipeline if hide_distant is True
         results.append(metrics)
 
         # Collect anomalies

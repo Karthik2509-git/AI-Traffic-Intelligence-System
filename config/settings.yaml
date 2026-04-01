@@ -19,6 +19,8 @@ model:
 detection:
   confidence_threshold: 0.40   # Min box confidence (0–1)
   min_motorcycle_conf: 0.25    # Capture small/distant bikes in Beast Mode
+  industrial_conf_floor: 0.35  # Threshold below which an object is 'Uncertain'
+  min_deep_field_area: 800     # BBox area (px^2) below which an object is 'Distant'
   iou_threshold: 0.45          # NMS IoU overlap threshold
   frame_skip: 1                # Process every N-th frame (1 = all frames)
   vehicle_classes:
@@ -39,7 +41,8 @@ tracking:
   max_age: 5                # Frames a track survives without a match
   min_hits: 3               # Confirmations before reporting a track
   iou_threshold: 0.30       # Min IoU for detection–track association
-  classification_smooth_window: 10 # Frames to average for stable labels
+  classification_smooth_window: 15 # Frames to average for stable labels
+  weighted_smoothing: true         # Use confidence-weighted vote for stability
 
 # ── Signal optimizer ────────────────────────────────────────────────
 signal:

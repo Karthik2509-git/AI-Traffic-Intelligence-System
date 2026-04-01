@@ -66,12 +66,15 @@ class PipelineConfig:
     frame_skip:          int   = 1          # process every N-th frame (1 = all)
     inference_size:      int   = 640        # YOLO input resolution
     min_motorcycle_conf: float = 0.25       # capture far-away bikes
+    industrial_conf_floor: float = 0.35     # certainty floor
+    min_deep_field_area: int   = 800        # px^2 below which is 'Distant'
 
     # ── Tracking ───────────────────────────────────────────────────────
     tracker_max_age:     int   = 5
     tracker_min_hits:    int   = 3
     tracker_iou:         float = 0.30
-    classification_smooth_window: int = 10  # frames for stable labeling
+    classification_smooth_window: int = 15  # frames for stable labeling
+    weighted_smoothing:  bool  = True       # use score-weighted consensus
 
     # ── Density ────────────────────────────────────────────────────────
     ema_alpha:           float = 0.20
@@ -98,6 +101,7 @@ class PipelineConfig:
     save_annotated:      bool  = True
     output_dir:          Path  = Path("output")
     display:             bool  = False      # cv2.imshow
+    hide_distant_objects: bool = False      # if True, gray/uncertain boxes are hidden
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +156,7 @@ class TrafficPipeline:
         
         # Tracking state (for age/hit_streak with ByteTrack)
         self._track_history: dict[int, dict] = {} # id -> {age, hits}
-        self._label_history: dict[int, list[str]] = {} # id -> [label1, label2...]
+        self._label_history: dict[int, list[tuple[str, float]]] = {} # id -> [(label, conf), ...]
 
 
         # New modules
@@ -281,24 +285,42 @@ class TrafficPipeline:
             min_motorcycle_conf  = cfg.min_motorcycle_conf,
         )
         
-        # ── 2b. Temporal Label Consensus (Smoothing) ─────────────────────
-        from collections import Counter
+        # ── 2b. Temporal Label Consensus (Weighted Smoothing) ─────────────
         for track in tracks:
             tid = track.track_id
             if tid not in self._label_history:
                 self._label_history[tid] = []
             
-            # Record current observation
-            self._label_history[tid].append(track.class_name)
+            # Record current observation: (label, confidence)
+            self._label_history[tid].append((track.class_name, track.confidence))
             
             # Keep only the last N frames
             if len(self._label_history[tid]) > cfg.classification_smooth_window:
                 self._label_history[tid].pop(0)
             
-            # Apply Majority Vote
-            counts = Counter(self._label_history[tid])
-            winner, _ = counts.most_common(1)[0]
-            track.class_name = winner
+            # Apply Consensus Logic
+            if cfg.weighted_smoothing:
+                # Weighted Majority Vote: sum of confidences per class
+                scores: dict[str, float] = {}
+                for lbl, conf in self._label_history[tid]:
+                    scores[lbl] = scores.get(lbl, 0.0) + conf
+                # Choose class with the highest total weight
+                winner = max(scores, key=scores.get)
+                track.class_name = winner
+            else:
+                # Simple Majority Vote
+                from collections import Counter
+                lbls = [l for l, c in self._label_history[tid]]
+                counts = Counter(lbls)
+                winner, _ = counts.most_common(1)[0]
+                track.class_name = winner
+
+            # ── 2c. Deep-Field Flagging ──────────────────────────────────
+            # If AI is uncertain or object is too far (tiny), mark as Distant
+            x1, y1, x2, y2 = track.bbox
+            area = (x2 - x1) * (y2 - y1)
+            is_dist = area < cfg.min_deep_field_area or track.confidence < cfg.industrial_conf_floor
+            track.metadata["is_distant"] = is_dist
 
 
         # ── 3. Density analysis ──────────────────────────────────────────
@@ -514,6 +536,15 @@ class TrafficPipeline:
         speed_results: list[VehicleSpeedInfo] | None = None,
     ) -> np.ndarray:
         """Compose the annotated output frame."""
+        h, w = frame.shape[:2]
+        
+        # ── Dynamic HD Scaling ──────────────────────────────────────────
+        # Scale 0.45 @ 640px -> 0.70 @ 1280px
+        # Thickness 1 @ 640px -> 2 @ 1280px
+        scale_factor = w / 640.0
+        font_scale   = max(0.40, min(0.80, 0.45 * scale_factor))
+        thickness    = 2 if w >= 1280 else 1
+        
         lane_labels = {
             lane.name: density.density_label
             for lane in self._lanes
@@ -529,33 +560,45 @@ class TrafficPipeline:
         for track in tracks:
             if not track.confirmed:
                 continue
+            
+            is_distant = track.metadata.get("is_distant", False)
+            if is_distant and cfg.hide_distant_objects:
+                continue
+                
             x1, y1, x2, y2 = map(int, track.bbox)
             
             # Determine status-based colour
             sp = speed_map.get(track.track_id)
+            is_distant = track.metadata.get("is_distant", False)
             
             # Use class-specific default
             colour = CLASS_COLOURS.get(track.class_name, (180, 180, 180))
             
-            # Status overrides (Speeding = Red, Stopped = Yellow)
-            if sp:
+            # Status overrides (Distant wins over all, then Speeding/Stopped)
+            if is_distant:
+                colour = (160, 160, 160)  # Gray for Deep-Field
+            elif sp:
                 if sp.is_violation:
                     colour = (0, 0, 255)      # Red for CRITICAL speed
                 elif sp.speed_class == "stopped":
                     colour = (0, 215, 255)    # Golden-Yellow for INCIDENT/STOPPED
 
-            cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2)
+            cv2.rectangle(out, (x1, y1), (x2, y2), colour, thickness + 1)
             
             # Label strip (filled background for better readability)
-            label = f"#{track.track_id} {track.class_name}"
-            if sp:
-                label += f" {sp.speed_kmh:.0f}km/h"
-                if sp.speed_class == "stopped": label += " [STOPPED]"
+            label = f"#{track.track_id} "
+            if is_distant:
+                label += "[Distant Detection]"
+            else:
+                label += f"{track.class_name}"
+                if sp:
+                    label += f" {sp.speed_kmh:.0f}km/h"
+                    if sp.speed_class == "stopped": label += " [STOPPED]"
                 
-            (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
             cv2.rectangle(out, (x1, y1 - lh - baseline - 4), (x1 + lw + 4, y1), colour, -1)
             cv2.putText(out, label, (x1 + 2, y1 - baseline - 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
         # HUD overlay
