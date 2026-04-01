@@ -292,9 +292,16 @@ class TrafficPipeline:
         # ── 3b. Speed analysis ───────────────────────────────────────────
         speed_results: list[VehicleSpeedInfo] = []
         speed_summary: dict = {}
+        speed_variance: float = 0.0
         if self._speed is not None:
             speed_results = self._speed.update(tracks)
             speed_summary = self._speed.get_summary(speed_results)
+            
+            # Compute speed variance for ML predictor
+            if len(speed_results) > 1:
+                speeds = [s.speed_kmh for s in speed_results]
+                speed_variance = float(np.var(speeds))
+
 
         # ── 3c. Heatmap update ───────────────────────────────────────────
         if self._heatmap is not None:
@@ -312,7 +319,7 @@ class TrafficPipeline:
                 self._maybe_train()
 
             if self._predictor_ready:
-                schedule = self._run_optimizer(density)
+                schedule = self._run_optimizer(density, speed_variance)
 
         # ── 5. Anomaly detection ─────────────────────────────────────────
         anomaly_events: list[AnomalyEvent] = []
@@ -326,7 +333,11 @@ class TrafficPipeline:
             }
             if speed_summary:
                 anomaly_metrics["avg_speed_kmh"] = speed_summary.get("avg_speed_kmh", 0)
-            anomaly_events = self._anomaly.analyse(self._frame_count, anomaly_metrics)
+            anomaly_events = self._anomaly.analyse(
+                frame_idx    = self._frame_count, 
+                metrics      = anomaly_metrics,
+                track_speeds = speed_results,
+            )
 
         # ── 6. Annotate frame ────────────────────────────────────────────
         annotated = self._annotate(frame, tracks, density, schedule, speed_results)
@@ -444,7 +455,7 @@ class TrafficPipeline:
         except ValueError as exc:
             logger.debug("Predictor training skipped: %s", exc)
 
-    def _run_optimizer(self, density: FrameDensity) -> PhaseSchedule | None:
+    def _run_optimizer(self, density: FrameDensity, speed_variance: float = 0.0) -> PhaseSchedule | None:
         """Run prediction + signal optimisation for current density."""
         if not self._predictor_ready:
             return None
@@ -453,7 +464,13 @@ class TrafficPipeline:
         flow_rate    = self._density.flow_rate_per_minute()
         count_trend  = self._density.rolling_average(5) - self._density.rolling_average(20)
 
-        feat_vec  = build_feature_vector(density, flow_rate, count_trend)
+        feat_vec  = build_feature_vector(
+            fd                = density, 
+            flow_rate_per_min = flow_rate, 
+            count_trend       = count_trend,
+            speed_variance    = speed_variance,
+        )
+
         pred      = self._predictor.predict(feat_vec)
 
         lane_inputs = [

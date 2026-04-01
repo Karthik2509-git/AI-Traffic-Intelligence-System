@@ -65,6 +65,7 @@ FEATURE_COLS = [
     "congestion_score",
     "flow_rate_per_min",
     "count_trend",
+    "speed_variance",
     "time_of_day_sin",
     "time_of_day_cos",
 ]
@@ -80,6 +81,7 @@ def build_feature_vector(
     fd:                FrameDensity,
     flow_rate_per_min: float,
     count_trend:       float,
+    speed_variance:    float = 0.0,
     dt:                datetime | None = None,
 ) -> np.ndarray:
     """
@@ -107,11 +109,12 @@ def build_feature_vector(
         fd.congestion_score,
         flow_rate_per_min,
         count_trend,
+        speed_variance,
         tod_sin,
         tod_cos,
     ]], dtype=float)
 
-    return vec  # shape (1, 7)
+    return vec  # shape (1, 8)
 
 
 def frames_to_dataframe(
@@ -152,6 +155,7 @@ def frames_to_dataframe(
             "congestion_score":  fd.congestion_score,
             "flow_rate_per_min": flow,
             "count_trend":       trend,
+            "speed_variance":    0.0,  # historical speed variance estimation (placeholder)
             "time_of_day_sin":   tod_sin,
             "time_of_day_cos":   tod_cos,
             "label":             label,

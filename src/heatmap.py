@@ -79,6 +79,13 @@ class HeatmapGenerator:
         self.height, self.width = frame_shape
         self.cfg = config or HeatmapConfig()
 
+        # Resolution scaling (baseline = 640px)
+        self._scale = self.width / 640.0
+        self._scaled_radius = max(4, int(12 * self._scale))
+        self._scaled_blur   = max(5, int(self.cfg.blur_kernel * self._scale))
+        if self._scaled_blur % 2 == 0:
+            self._scaled_blur += 1
+
         # Accumulation buffer (float32 for smooth decay)
         self._accumulator = np.zeros((self.height, self.width), dtype=np.float32)
 
@@ -87,8 +94,8 @@ class HeatmapGenerator:
         self._frame_count  = 0
 
         logger.info(
-            "HeatmapGenerator initialised: %dx%d, decay=%.2f, blur=%d",
-            self.width, self.height, self.cfg.decay_factor, self.cfg.blur_kernel,
+            "HeatmapGenerator initialised: %dx%d, scale=%.2f, blur=%d",
+            self.width, self.height, self._scale, self._scaled_blur,
         )
 
     # ------------------------------------------------------------------
@@ -116,7 +123,7 @@ class HeatmapGenerator:
                 cv2.circle(
                     self._accumulator,
                     (cx, cy),
-                    radius=12,
+                    radius=self._scaled_radius,
                     color=self.cfg.intensity,
                     thickness=-1,  # filled circle
                 )
@@ -140,7 +147,7 @@ class HeatmapGenerator:
                 if 0 <= cx < self.width and 0 <= cy < self.height:
                     cv2.circle(
                         self._accumulator, (cx, cy),
-                        radius=12, color=self.cfg.intensity, thickness=-1,
+                        radius=self._scaled_radius, color=self.cfg.intensity, thickness=-1,
                     )
                     self._total_points += 1
 
@@ -158,13 +165,8 @@ class HeatmapGenerator:
         -------
         Colormapped heatmap as a (H, W, 3) BGR image.
         """
-        # Ensure kernel is odd
-        k = self.cfg.blur_kernel
-        if k % 2 == 0:
-            k += 1
-
-        # Gaussian smoothing
-        smoothed = cv2.GaussianBlur(self._accumulator, (k, k), 0)
+        # Gaussian smoothing using scaled kernel
+        smoothed = cv2.GaussianBlur(self._accumulator, (self._scaled_blur, self._scaled_blur), 0)
 
         # Normalize to 0-255
         max_val = smoothed.max()

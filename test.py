@@ -242,6 +242,7 @@ class TestPredictor:
             "congestion_score":  counts.astype(float) * 2.5,
             "flow_rate_per_min": rng.uniform(0, 30, n),
             "count_trend":       rng.uniform(-5, 5, n),
+            "speed_variance":    rng.uniform(0, 100, n),
             "time_of_day_sin":   np.sin(rng.uniform(0, 2 * math.pi, n)),
             "time_of_day_cos":   np.cos(rng.uniform(0, 2 * math.pi, n)),
             "label":             labels,
@@ -256,7 +257,7 @@ class TestPredictor:
         assert result["cv_accuracy"] > 0.0
 
         fv = df[["ema_count", "occupancy_ratio", "congestion_score",
-                  "flow_rate_per_min", "count_trend",
+                  "flow_rate_per_min", "count_trend", "speed_variance",
                   "time_of_day_sin", "time_of_day_cos"]].values[[0]]
         pr = pred.predict(fv)
         assert pr.label in {"Low", "Medium", "High"}
@@ -267,7 +268,7 @@ class TestPredictor:
         from sklearn.exceptions import NotFittedError
         pred = CongestionPredictor()
         with pytest.raises(NotFittedError):
-            pred.predict(np.zeros((1, 7)))
+            pred.predict(np.zeros((1, 8)))
 
     def test_insufficient_data_raises(self):
         from src.predictor import CongestionPredictor
@@ -276,7 +277,7 @@ class TestPredictor:
         tiny_df = pd.DataFrame({
             col: [0.0] * 5
             for col in ["ema_count", "occupancy_ratio", "congestion_score",
-                        "flow_rate_per_min", "count_trend",
+                        "flow_rate_per_min", "count_trend", "speed_variance",
                         "time_of_day_sin", "time_of_day_cos", "label"]
         })
         with pytest.raises(ValueError, match="Insufficient"):
@@ -447,7 +448,7 @@ class TestConfigLoading:
     def test_load_config_model_name(self):
         from src.utils import load_config
         cfg = load_config()
-        assert cfg["model"]["name"] == "yolov8n.pt"
+        assert cfg["model"]["name"] == "yolov8m.pt"
 
     def test_load_config_missing_file(self, tmp_path):
         from src.utils import load_config
@@ -459,7 +460,7 @@ class TestConfigLoading:
         pipeline = pipeline_from_config(source=0)
         assert pipeline is not None
         assert pipeline.config is not None
-        assert pipeline.config.model_name == "yolov8n.pt"
+        assert pipeline.config.model_name == "yolov8m.pt"
         assert pipeline.config.confidence_threshold == 0.40
         assert pipeline.config.cycle_time_s == 120
 
@@ -598,7 +599,7 @@ class TestPipelineIntegration:
         from src.pipeline import TrafficPipeline, PipelineConfig
 
         cfg = PipelineConfig(
-            model_name="yolov8n.pt",
+            model_name="yolov8m.pt",
             save_annotated=False,
             display=False,
         )

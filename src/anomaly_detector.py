@@ -92,6 +92,11 @@ class AnomalyConfig:
     # Speed anomaly
     speed_drop_pct:       float = 0.40    # 40% speed drop = anomaly
 
+    # Stationary vehicle detection
+    stationary_speed_kmh: float = 3.0     # speed < 3km/h = stationary
+    stationary_min_age:   int   = 60      # must be tracked for 60 frames
+    stationary_persist:   int   = 45      # must be stationary for 45 frames
+
 
 # ---------------------------------------------------------------------------
 # Anomaly Detector
@@ -121,6 +126,10 @@ class AnomalyDetector:
         self._cong_history:  deque[float]   = deque(maxlen=max(self.cfg.congestion_persist * 3, 30))
         self._speed_history: deque[float]   = deque(maxlen=30)
         self._trend_history: deque[str]     = deque(maxlen=10)
+        
+        # Track-specific stationary history: {track_id: stationary_frame_count}
+        self._stationary_history: dict[int, int] = {}
+
 
         # Cooldown tracking: {anomaly_type: last_frame_idx}
         self._last_alert: dict[str, int] = {}
@@ -139,6 +148,7 @@ class AnomalyDetector:
         self,
         frame_idx: int,
         metrics: dict[str, Any],
+        track_speeds: list[Any] | None = None,
     ) -> list[AnomalyEvent]:
         """
         Analyse a single frame's metrics for anomalies.
@@ -175,6 +185,10 @@ class AnomalyDetector:
         events.extend(self._check_congestion_surge(frame_idx, cong, metrics))
         events.extend(self._check_trend_reversal(frame_idx, metrics))
         events.extend(self._check_speed_anomaly(frame_idx, avg_speed, metrics))
+        
+        if track_speeds is not None:
+            events.extend(self._check_stationary_vehicle(frame_idx, track_speeds, metrics))
+
 
         self._total_events += len(events)
         return events
@@ -401,6 +415,62 @@ class AnomalyDetector:
             return [event]
 
         return []
+
+    # ------------------------------------------------------------------
+    # Detector: Stationary Vehicle
+    # ------------------------------------------------------------------
+
+    def _check_stationary_vehicle(
+        self, 
+        frame_idx: int, 
+        track_speeds: list[Any],
+        metrics: dict,
+    ) -> list[AnomalyEvent]:
+        """Check for vehicles that have stopped in a high-speed zone."""
+        if self._in_cooldown("stationary", frame_idx):
+            return []
+
+        active_ids = set()
+        events = []
+
+        for info in track_speeds:
+            tid = info.track_id
+            active_ids.add(tid)
+            
+            # Use speed_kmh from VehicleSpeedInfo
+            is_stationary = info.speed_kmh < self.cfg.stationary_speed_kmh
+            
+            if is_stationary:
+                self._stationary_history[tid] = self._stationary_history.get(tid, 0) + 1
+            else:
+                self._stationary_history[tid] = 0 # reset if moving
+            
+            # Alert only if stationary threshold exceeded
+            if self._stationary_history[tid] == self.cfg.stationary_persist:
+                event = AnomalyEvent(
+                    event_id=str(uuid.uuid4()),
+                    timestamp=datetime.now(),
+                    frame_idx=frame_idx,
+                    anomaly_type="stationary",
+                    severity="critical",
+                    description=(
+                        f"Stationary Vehicle Alert: Track #{tid} has stopped "
+                        f"on active roadway for >{self.cfg.stationary_persist} frames."
+                    ),
+                    confidence=0.85,
+                    metrics_snapshot=dict(metrics),
+                )
+                events.append(event)
+                self._last_alert["stationary"] = frame_idx
+                logger.warning("ANOMALY [stationary] frame=%d track_id=%d", frame_idx, tid)
+
+        # Cleanup stale tracks from stationary history
+        stale_ids = set(self._stationary_history.keys()) - active_ids
+        for sid in stale_ids:
+            self._stationary_history.pop(sid, None)
+
+        return events
+
 
     # ------------------------------------------------------------------
     # Utilities

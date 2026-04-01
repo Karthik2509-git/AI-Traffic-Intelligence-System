@@ -4,7 +4,7 @@
 
 # ── Model ───────────────────────────────────────────────────────────
 model:
-  name: yolov8n.pt          # Default model. Nano is fast but least accurate.
+  name: yolov8m.pt          # Default model. Medium is the 'Beast' standard.
   available_models:         # Options: yolov8n / s / m / l / x
     - yolov8n.pt
     - yolov8s.pt
@@ -99,6 +99,9 @@ anomaly:
   congestion_critical: 80.0 # Congestion score threshold for critical alert
   congestion_persist: 5     # Frames the threshold must persist
   cooldown_frames: 30       # Min frames between same-type alerts
+  stationary_speed_kmh: 3.0 # Speed < 3km/h = stationary
+  stationary_persist: 45    # Continuous frames for stationary alert
+  stationary_min_age: 60    # Min track age for stationary alert
 
 # -- Speed analytics ---------------------------------------------------------
 speed:
@@ -107,7 +110,7 @@ speed:
   ema_alpha: 0.25           # Smoothing factor for speed estimates
   speed_limit_kmh: 80.0     # Speed limit for violation flagging
   max_physical_speed: 220.0 # Outlier rejection threshold (ignore speeds > this)
-  min_speed_frames: 5       # Min frames tracked before reporting speed
+  min_speed_frames: 8       # Min frames tracked before reporting 'Beast' speed
   stopped_max_kmh: 5.0
   slow_max_kmh: 30.0
   normal_max_kmh: 60.0
