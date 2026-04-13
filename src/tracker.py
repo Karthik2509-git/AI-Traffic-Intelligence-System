@@ -17,7 +17,7 @@ Why not just ByteTrack/DeepSORT?
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -33,32 +33,32 @@ logger = get_logger(__name__)
 
 class KalmanBoxTracker:
     """
-    Represents a tracked bounding box using a Kalman Filter.
+    State-space Kalman Filter for tracking bounding boxes in image coordinates.
 
-    State vector: [cx, cy, s, r, ċx, ċy, ṡ]
-        cx, cy : centre coordinates
-        s      : area (scale)
-        r      : aspect ratio (w/h, kept constant)
-        ċx, ċy : velocities
-        ṡ      : area velocity
-
-    Observation vector: [cx, cy, s, r]
+    Maintains a 7D state vector [cx, cy, s, r, vx, vy, vs] representing:
+      - (cx, cy): Center of the box
+      - s: Area (scale)
+      - r: Aspect ratio
+      - (vx, vy, vs): Velocities of the above
     """
 
-    count: int = 0   # global track-ID counter
+    count: int = 0
 
     def __init__(self, bbox: np.ndarray) -> None:
         """
+        Initialise a tracker with an initial bounding box.
+
         Parameters
         ----------
-        bbox : (x1, y1, x2, y2) array
+        bbox : np.ndarray
+            Initial [x1, y1, x2, y2] coordinates.
         """
         KalmanBoxTracker.count += 1
-        self.id            = KalmanBoxTracker.count
-        self.hits          = 1       # frames with successful detection match
-        self.hit_streak    = 1       # consecutive frames matched
-        self.age           = 1       # total frames since birth
-        self.time_since_update = 0   # frames since last matched detection
+        self.id = KalmanBoxTracker.count
+        self.hits = 1
+        self.hit_streak = 1
+        self.age = 1
+        self.time_since_update = 0
 
         # --- Kalman matrices (7-state, 4-observation) ----------------------
         dt = 1.0
@@ -193,6 +193,7 @@ class Track:
     hit_streak: int                 # consecutive frames matched (≥ min_hits → confirmed)
     age:        int                 # total frames since birth
     history:    list[np.ndarray] = field(default_factory=list)  # past centre points
+    metadata:   dict[str, Any] = field(default_factory=dict)     # custom attributes
 
     @property
     def confirmed(self) -> bool:
@@ -206,19 +207,12 @@ class Track:
         )
 
 
-# ---------------------------------------------------------------------------
-# SORT Tracker
-# ---------------------------------------------------------------------------
-
 class SORTTracker:
     """
-    Simple Online and Realtime Tracker.
+    Simple Online and Realtime Tracking (SORT) Implementation.
 
-    Parameters
-    ----------
-    max_age       : Frames a track survives without a detection match.
-    min_hits      : Frames a track must be matched before it is reported as confirmed.
-    iou_threshold : Minimum IoU to associate a detection with a track.
+    Associates detections with Kalman-filtered tracks using the Hungarian
+    algorithm and IoU overlap as a distance metric.
     """
 
     def __init__(
@@ -227,16 +221,25 @@ class SORTTracker:
         min_hits: int = 3,
         iou_threshold: float = 0.30,
     ) -> None:
-        self.max_age       = max_age
-        self.min_hits      = min_hits
+        """
+        Parameters
+        ----------
+        max_age : int
+            Max frames to keep a track alive without a detection match.
+        min_hits : int
+            Min consecutive matches before confirming a track.
+        iou_threshold : float
+            Min IoU for a valid detection-tracker association.
+        """
+        self.max_age = max_age
+        self.min_hits = min_hits
         self.iou_threshold = iou_threshold
         self._trackers: list[KalmanBoxTracker] = []
-        self._meta: dict[int, dict] = {}  # track_id → {class_name, conf}
+        self._meta: dict[int, dict[str, Any]] = {}
         self.frame_count = 0
 
-    # ------------------------------------------------------------------
     def reset(self) -> None:
-        """Clear all tracks (call between independent video streams)."""
+        """Reset all internal state and global counters."""
         self._trackers.clear()
         self._meta.clear()
         KalmanBoxTracker.count = 0

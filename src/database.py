@@ -1,20 +1,9 @@
 """
-database.py - Persistent traffic data storage using SQLite.
+database.py — Industrial-grade persistence layer using SQLite.
 
-Provides:
-  - Structured schema for frame metrics, signal logs, and anomaly events
-  - Session-based organisation for multi-run tracking
-  - CSV / JSON batch export for downstream analysis
-  - Historical trend queries across sessions
-  - Thread-safe connection management
-
-Schema
-------
-  frame_metrics   : Per-frame vehicle counts, density, congestion, flow rate
-  signal_logs     : Signal optimizer recommendations per lane
-  anomaly_events  : Detected traffic anomalies (incidents, spikes, drops)
-  speed_records   : Per-vehicle speed measurements
-  sessions        : Session metadata (start time, source, config hash)
+Provides a structured schema for multi-session traffic monitoring, 
+including high-fidelity logging of frame metrics, signal optimizer 
+states, and statistical anomaly events.
 """
 
 from __future__ import annotations
@@ -136,17 +125,16 @@ CREATE INDEX IF NOT EXISTS idx_speed_session ON speed_records(session_id, frame_
 
 class TrafficDatabase:
     """
-    Persistent SQLite storage for traffic intelligence data.
+    Persistent SQLite storage engine for Traffic Intelligence metrics.
 
-    Usage
-    -----
-    db = TrafficDatabase()                       # default: output/traffic.db
-    sid = db.start_session("video.mp4")
-    db.log_frame(sid, frame_idx=0, metrics={...})
-    db.export_csv(sid, "output/report.csv")
-    db.close()
+    Handles thread-safe concurrent access to analytical data across 
+    multiple processing sessions. Supports batch exports and historical 
+    trend queries.
 
-    Thread safety: each method acquires its own connection via context manager.
+    Parameters
+    ----------
+    db_path : Path | str | None
+        Filesystem path to the SQLite database. Defaults to 'output/traffic.db'.
     """
 
     def __init__(self, db_path: Path | str | None = None) -> None:
@@ -155,7 +143,7 @@ class TrafficDatabase:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create schema
+        # Initialise relational schema
         with self._connect() as conn:
             conn.executescript(_SCHEMA_SQL)
 
@@ -163,8 +151,17 @@ class TrafficDatabase:
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
+        """
+        Create a thread-safe database connection context with WAL mode enabled.
+
+        Yields
+        ------
+        sqlite3.Connection
+            An active SQLite connection.
+        """
         conn = sqlite3.connect(str(self._db_path), timeout=10)
         conn.row_factory = sqlite3.Row
+        # Optimise for high-concurrency stream logging
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         try:
@@ -186,7 +183,23 @@ class TrafficDatabase:
         config_hash: str = "",
         notes: str = "",
     ) -> str:
-        """Create a new analysis session and return its ID."""
+        """
+        Record the start of a new analysis session.
+
+        Parameters
+        ----------
+        source : str
+            The input video file or stream URL.
+        config_hash : str
+            Hash of the configuration for reproducibility.
+        notes : str
+            Arbitrary text notes about the run.
+
+        Returns
+        -------
+        str
+            A unique session identifier (SID).
+        """
         sid = new_session_id()
         with self._connect() as conn:
             conn.execute(
@@ -217,7 +230,19 @@ class TrafficDatabase:
         frame_idx: int,
         metrics: dict[str, Any],
     ) -> None:
-        """Persist per-frame traffic metrics."""
+        """
+        Persist high-level analytical metrics for a single video frame.
+
+        Parameters
+        ----------
+        session_id : str
+            The active SID.
+        frame_idx : int
+            Sequential index of the frame.
+        metrics : dict[str, Any]
+            Dictionary containing 'total_vehicles', 'counts_per_class', 
+            'density_label', etc.
+        """
         counts = metrics.get("counts_per_class", {})
         with self._connect() as conn:
             conn.execute(

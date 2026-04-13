@@ -1,23 +1,9 @@
 """
-anomaly_detector.py - Real-time traffic anomaly detection engine.
+anomaly_detector.py — Statistical traffic anomaly detection engine.
 
-Monitors rolling traffic metrics and fires structured alerts when
-statistical anomalies are detected, indicating potential incidents.
-
-Detection Methods
------------------
-  1. Z-Score Spike   : Vehicle count deviates >N std-devs from rolling mean
-  2. Sudden Drop     : Flow rate or count drops >X% within a short window
-  3. Trend Reversal  : Rapid shift from stable/falling to rising (congestion wave)
-  4. Congestion Surge: Congestion score exceeds critical threshold persistently
-  5. Speed Anomaly   : Average speed drops suddenly (upstream accident)
-
-Design
-------
-  - Stateless per-event: each event gets a UUID and is never duplicated
-  - Configurable thresholds via settings.yaml
-  - Cooldown periods to prevent alert fatigue
-  - Severity classification: info, warning, critical
+Provides real-time monitoring of traffic metrics to identify significant 
+deviations from historical norms, such as sudden count spikes, flow rate 
+drops, or stationary vehicles.
 """
 
 from __future__ import annotations
@@ -104,41 +90,38 @@ class AnomalyConfig:
 
 class AnomalyDetector:
     """
-    Statistical traffic anomaly detection engine.
+    Industrial-grade statistical monitor for traffic incident identification.
 
-    Feed it frame-level metrics and it will return anomaly events
-    when unusual patterns are detected.
+    Orchestrates multiple detection sub-engines (Z-Score, Trend-Analysis, etc.) 
+    to provide a unified high-confidence alert stream.
 
-    Usage
-    -----
-    detector = AnomalyDetector()
-    events = detector.analyse(frame_idx=42, metrics={...})
-    for event in events:
-        print(event.severity, event.description)
+    Parameters
+    ----------
+    config : AnomalyConfig | None
+        Configuration thresholds for anomaly triggers.
     """
 
     def __init__(self, config: AnomalyConfig | None = None) -> None:
         self.cfg = config or AnomalyConfig()
 
-        # Rolling history buffers
-        self._count_history: deque[float]   = deque(maxlen=max(self.cfg.zscore_window, 100))
-        self._flow_history:  deque[float]   = deque(maxlen=max(self.cfg.drop_window * 3, 50))
-        self._cong_history:  deque[float]   = deque(maxlen=max(self.cfg.congestion_persist * 3, 30))
-        self._speed_history: deque[float]   = deque(maxlen=30)
-        self._trend_history: deque[str]     = deque(maxlen=10)
+        # Rolling circular buffers for multi-window statistical analysis
+        self._count_history: deque[float] = deque(maxlen=max(self.cfg.zscore_window, 100))
+        self._flow_history:  deque[float] = deque(maxlen=max(self.cfg.drop_window * 3, 50))
+        self._cong_history:  deque[float] = deque(maxlen=max(self.cfg.congestion_persist * 3, 30))
+        self._speed_history: deque[float] = deque(maxlen=30)
+        self._trend_history: deque[str]   = deque(maxlen=10)
         
-        # Track-specific stationary history: {track_id: stationary_frame_count}
+        # Track-specific stationary history: {track_id: incident_duration_frames}
         self._stationary_history: dict[int, int] = {}
 
-
-        # Cooldown tracking: {anomaly_type: last_frame_idx}
+        # Alert debouncing: {anomaly_type: last_observed_frame}
         self._last_alert: dict[str, int] = {}
-
-        # Statistics
         self._total_events = 0
 
-        logger.info("AnomalyDetector initialised (zscore=%.1f, drop=%.0f%%)",
-                     self.cfg.zscore_threshold, self.cfg.drop_pct_threshold * 100)
+        logger.info(
+            "AnomalyDetector initialised (thresholds: z=%.1f, drop=%.0f%%)",
+            self.cfg.zscore_threshold, self.cfg.drop_pct_threshold * 100
+        )
 
     # ------------------------------------------------------------------
     # Main analysis
@@ -151,17 +134,21 @@ class AnomalyDetector:
         track_speeds: list[Any] | None = None,
     ) -> list[AnomalyEvent]:
         """
-        Analyse a single frame's metrics for anomalies.
+        Execute the full statistical analysis suite on current traffic metrics.
 
         Parameters
         ----------
-        frame_idx : Current frame index.
-        metrics   : Dict with keys: total_vehicles, congestion_score,
-                    flow_per_min, trend, ema_count, avg_speed_kmh (optional).
+        frame_idx : int
+            The absolute frame index in the video stream.
+        metrics : dict[str, Any]
+            Current frame metrics including total count, congestion, and flow.
+        track_speeds : list[Any] | None
+            Optional list of per-vehicle speed information for stationary detection.
 
         Returns
         -------
-        List of AnomalyEvent objects (may be empty).
+        list[AnomalyEvent]
+            A list of detected anomalies for the current frame.
         """
         count     = float(metrics.get("total_vehicles", 0))
         cong      = float(metrics.get("congestion_score", 0))
@@ -198,16 +185,33 @@ class AnomalyDetector:
     # ------------------------------------------------------------------
 
     def _check_zscore_spike(
-        self, frame_idx: int, count: float, metrics: dict,
+        self, frame_idx: int, count: float, metrics: dict[str, Any],
     ) -> list[AnomalyEvent]:
+        """
+        Detect sudden spikes in vehicle counts using rolling Z-Score analysis.
+
+        Parameters
+        ----------
+        frame_idx : int
+            Current frame index.
+        count : float
+            Current total vehicle count.
+        metrics : dict[str, Any]
+            Current metrics for snapshotting.
+
+        Returns
+        -------
+        list[AnomalyEvent]
+            Spike anomalies if detected.
+        """
         if len(self._count_history) < self.cfg.zscore_window:
             return []
         if self._in_cooldown("spike", frame_idx):
             return []
 
-        arr  = np.array(list(self._count_history))
+        arr = np.array(list(self._count_history))
         mean = arr.mean()
-        std  = arr.std()
+        std = arr.std()
 
         if std < 0.5:
             return []
@@ -216,8 +220,8 @@ class AnomalyDetector:
 
         if abs(z) >= self.cfg.zscore_threshold:
             direction = "above" if z > 0 else "below"
-            severity  = "critical" if abs(z) > 3.5 else "warning"
-            conf      = min(abs(z) / 5.0, 1.0)
+            severity = "critical" if abs(z) > 3.5 else "warning"
+            conf = min(abs(z) / 5.0, 1.0)
 
             event = AnomalyEvent(
                 event_id=str(uuid.uuid4()),
@@ -243,8 +247,23 @@ class AnomalyDetector:
     # ------------------------------------------------------------------
 
     def _check_sudden_drop(
-        self, frame_idx: int, metrics: dict,
+        self, frame_idx: int, metrics: dict[str, Any],
     ) -> list[AnomalyEvent]:
+        """
+        Detect sudden drops in traffic flow using temporal window comparison.
+
+        Parameters
+        ----------
+        frame_idx : int
+            Current frame index.
+        metrics : dict[str, Any]
+            Current metrics for snapshotting.
+
+        Returns
+        -------
+        list[AnomalyEvent]
+            Drop anomalies if detected.
+        """
         window = self.cfg.drop_window
         if len(self._flow_history) < window * 2:
             return []
@@ -288,8 +307,25 @@ class AnomalyDetector:
     # ------------------------------------------------------------------
 
     def _check_congestion_surge(
-        self, frame_idx: int, cong: float, metrics: dict,
+        self, frame_idx: int, cong: float, metrics: dict[str, Any],
     ) -> list[AnomalyEvent]:
+        """
+        Identify sustained critical congestion levels.
+
+        Parameters
+        ----------
+        frame_idx : int
+            Current frame index.
+        cong : float
+            Current congestion score (0-100).
+        metrics : dict[str, Any]
+            Current metrics for snapshotting.
+
+        Returns
+        -------
+        list[AnomalyEvent]
+            Congestion surge anomalies if detected.
+        """
         if len(self._cong_history) < self.cfg.congestion_persist:
             return []
         if self._in_cooldown("congestion_surge", frame_idx):
@@ -423,10 +459,26 @@ class AnomalyDetector:
     def _check_stationary_vehicle(
         self, 
         frame_idx: int, 
-        track_speeds: list[Any],
-        metrics: dict,
+        track_speeds: Sequence[Any],
+        metrics: dict[str, Any],
     ) -> list[AnomalyEvent]:
-        """Check for vehicles that have stopped in a high-speed zone."""
+        """
+        Identify stationary vehicles on active roadways.
+
+        Parameters
+        ----------
+        frame_idx : int
+            Current frame index.
+        track_speeds : Sequence[Any]
+            Active vehicle speed records.
+        metrics : dict[str, Any]
+            Current metrics for snapshotting.
+
+        Returns
+        -------
+        list[AnomalyEvent]
+            Stationary vehicle anomalies if detected.
+        """
         if self._in_cooldown("stationary", frame_idx):
             return []
 
@@ -437,15 +489,15 @@ class AnomalyDetector:
             tid = info.track_id
             active_ids.add(tid)
             
-            # Use speed_kmh from VehicleSpeedInfo
+            # Identify stationary status via configurable threshold
             is_stationary = info.speed_kmh < self.cfg.stationary_speed_kmh
             
             if is_stationary:
                 self._stationary_history[tid] = self._stationary_history.get(tid, 0) + 1
             else:
-                self._stationary_history[tid] = 0 # reset if moving
+                self._stationary_history[tid] = 0
             
-            # Alert only if stationary threshold exceeded
+            # Fire alert if persistence threshold is met
             if self._stationary_history[tid] == self.cfg.stationary_persist:
                 event = AnomalyEvent(
                     event_id=str(uuid.uuid4()),
@@ -464,7 +516,7 @@ class AnomalyDetector:
                 self._last_alert["stationary"] = frame_idx
                 logger.warning("ANOMALY [stationary] frame=%d track_id=%d", frame_idx, tid)
 
-        # Cleanup stale tracks from stationary history
+        # Evict inactive tracks from local history
         stale_ids = set(self._stationary_history.keys()) - active_ids
         for sid in stale_ids:
             self._stationary_history.pop(sid, None)

@@ -229,28 +229,28 @@ edge_mode = st.sidebar.toggle(
     help="Reduces resolution to 320px for on-device performance (Fastest).",
 )
 
-beast_mode = st.sidebar.toggle(
-    "🦁 Beast-Accuracy Mode",
+high_res_mode = st.sidebar.toggle(
+    "🔭 High-Resolution Inference Mode (1280px)",
     value=False,
-    key="beast_mode_toggle",
-    help="Increases resolution to 1280px and auto-selects the Large model for ultimate precision.",
+    key="high_res_mode_toggle",
+    help="Increases resolution to 1280px for maximum precision in dense traffic or wide-field views.",
 )
 
-if beast_mode:
-    # Force Beast settings
+if high_res_mode:
+    # Force High-Res settings
     model_choice = "yolov8l.pt"
-    st.sidebar.info("🦁 **BEAST MODE ACTIVE**: High-Res Large model enabled.")
+    st.sidebar.info("🔭 **HIGH-RESOLUTION INFERENCE ACTIVE**: 1280px precision enabled.")
 
-if "edge_mode_toggle" in st.session_state and st.session_state.edge_mode_toggle and beast_mode:
-    st.sidebar.warning("⚠️ Edge and Beast modes are mutually exclusive. Disabling Edge mode.")
+if "edge_mode_toggle" in st.session_state and st.session_state.edge_mode_toggle and high_res_mode:
+    st.sidebar.warning("⚠️ Edge and High-Resolution modes are mutually exclusive. Disabling Edge mode.")
 
 
 cycle_time = st.sidebar.number_input(
     "Signal Cycle (s)", min_value=30, max_value=300, value=int(_default_cycle), step=10,
 )
 
-with st.sidebar.expander("🛡️ Accuracy Refinement", expanded=False):
-    st.caption("Fine-tune detection for specific traffic scenarios.")
+with st.sidebar.expander("🛠️ Inference Configuration Panel", expanded=False):
+    st.caption("Advanced parameters for performance tuning and detection logic.")
     motorcycle_sens = st.slider(
         "🏍️ Bike Sensitivity", 0.05, 0.50, 
         value=float(_cfg_detection.get("min_motorcycle_conf", 0.25)),
@@ -266,15 +266,15 @@ with st.sidebar.expander("🛡️ Accuracy Refinement", expanded=False):
         value=bool(_cfg_tracking.get("weighted_smoothing", True)),
         help="Gives high-confidence detections more weight in labeling."
     )
-    hide_distant = st.toggle(
-        "🌫️ Hide Deep-Field Objects",
+    filter_long_range = st.toggle(
+        "🌫️ Long-Range Detection Handling",
         value=False,
-        help="If enabled, tiny or uncertain vehicles (gray boxes) are hidden."
+        help="Supresses detections flagged as 'Uncertain' or 'Distant' based on depth heuristics.",
     )
-    crowded_opt = st.toggle(
-        "🏘️ Crowded Scene Opt",
-        value=bool(_cfg_detection.get("crowded_scene_opt", False)),
-        help="Uses Tiled Inference (SAHI-Lite) to detect small cars in dense traffic. (Slower FPS)"
+    dense_opt = st.toggle(
+        "🏘️ Dense Traffic Optimization",
+        value=bool(_cfg_detection.get("dense_traffic_optimization", False)),
+        help="Uses a Tiled Inference Pipeline to detect small cars in crowded scenes. (May reduce FPS)"
     )
 
 st.sidebar.markdown("---")
@@ -497,9 +497,9 @@ def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: in
         classification_smooth_window = int(smooth_window),
         weighted_smoothing   = weighted_vote,
         industrial_conf_floor = float(_cfg_detection.get("industrial_conf_floor", 0.35)),
-        min_deep_field_area  = int(_cfg_detection.get("min_deep_field_area", 800)),
-        hide_distant_objects = hide_distant,
-        crowded_scene_opt    = crowded_opt,
+        min_long_range_area  = int(_cfg_detection.get("min_long_range_area", 800)),
+        hide_distant_objects = filter_long_range,
+        dense_traffic_optimization = dense_opt,
         tile_overlap         = float(_cfg_detection.get("tile_overlap", 0.25)),
         tile_size            = int(_cfg_detection.get("tile_size", 640)),
     )

@@ -4,7 +4,7 @@
 
 # ── Model ───────────────────────────────────────────────────────────
 model:
-  name: yolov8m.pt          # Default model. Medium is the 'Beast' standard.
+  name: yolov8m.pt          # Default model. Medium is the High-Resolution standard.
   available_models:         # Options: yolov8n / s / m / l / x
     - yolov8n.pt
     - yolov8s.pt
@@ -18,12 +18,12 @@ model:
 # ── Detection ───────────────────────────────────────────────────────
 detection:
   confidence_threshold: 0.40   # Min box confidence (0–1)
-  min_motorcycle_conf: 0.25    # Capture small/distant bikes in Beast Mode
-  industrial_conf_floor: 0.35  # Threshold below which an object is 'Uncertain'
-  min_deep_field_area: 800     # BBox area (px^2) below which an object is 'Distant'
-  iou_threshold: 0.45          # NMS IoU overlap threshold
-  crowded_scene_opt: false     # Enable SAHI-Lite (tiled inference) for dense traffic
-  tile_overlap: 0.25           # Overlap between tiles (0–1)
+  min_motorcycle_conf: 0.25    # Capture small/distant bikes in High-Resolution Inference Mode
+  industrial_conf_floor: 0.35  # Confidence threshold for 'Uncertain' detections
+  min_long_range_area: 800     # BBox area (px^2) for Long-Range detection flagging
+  iou_threshold: 0.45          # NMS overlap threshold
+  dense_traffic_optimization: false # Tiled Inference Pipeline for crowded scenes
+  tile_overlap: 0.25           # Percentage overlap between tiles
   tile_size: 640               # Resolution of each tile
   frame_skip: 1                # Process every N-th frame (1 = all frames)
   vehicle_classes:
@@ -118,7 +118,7 @@ speed:
   ema_alpha: 0.25           # Smoothing factor for speed estimates
   speed_limit_kmh: 80.0     # Speed limit for violation flagging
   max_physical_speed: 220.0 # Outlier rejection threshold (ignore speeds > this)
-  min_speed_frames: 8       # Min frames tracked before reporting 'Beast' speed
+  min_speed_frames: 8       # Min frames tracked before reporting high-confidence speed
   stopped_max_kmh: 5.0
   slow_max_kmh: 30.0
   normal_max_kmh: 60.0

@@ -1,12 +1,9 @@
 """
-detection.py — Core vehicle detection engine.
+detection.py — Vehicle detection engine using YOLO and Tiled Inference.
 
-Wraps YOLOv8 inference with:
-  • Configurable confidence + NMS-IoU thresholds
-  • Per-class count aggregation with confidence-weighted scoring
-  • Structured result schema ready for downstream ML / analytics
-  • Annotated-image export with per-class colour coding
-  • Graceful error handling that never silently swallows exceptions
+Provides high-fidelity vehicle detection and tracking integration for 
+traffic intelligence systems. Supports standard single-pass inference 
+and high-resolution tiled inference for dense urban environments.
 """
 
 from __future__ import annotations
@@ -46,7 +43,24 @@ DENSITY_THRESHOLDS: dict[str, int] = {"low": 10, "medium": 25}
 # ---------------------------------------------------------------------------
 
 def load_model(model_name: str = "yolov8n.pt") -> YOLO:
-    """Load a YOLOv8 model, raising a clear RuntimeError on failure."""
+    """
+    Initialise a YOLOv8 detection model.
+
+    Parameters
+    ----------
+    model_name : str
+        The filename of the model (e.g., 'yolov8n.pt').
+
+    Returns
+    -------
+    YOLO
+        The loaded Ultralytics YOLO instance.
+
+    Raises
+    ------
+    RuntimeError
+        If the model file is invalid or cannot be loaded.
+    """
     logger.info("Loading YOLO model: %s", model_name)
     try:
         model = YOLO(model_name)
@@ -58,12 +72,17 @@ def load_model(model_name: str = "yolov8n.pt") -> YOLO:
 
 def classify_density(count: int) -> str:
     """
-    Map total vehicle count → traffic density label.
+    Classify traffic density based on total vehicle count.
 
-    Thresholds (tweakable via DENSITY_THRESHOLDS):
-      Low    : count < 10
-      Medium : 10 ≤ count ≤ 25
-      High   : count > 25
+    Parameters
+    ----------
+    count : int
+        Current total number of vehicles in the frame.
+
+    Returns
+    -------
+    str
+        Density label ('Low', 'Medium', or 'High').
     """
     if count < DENSITY_THRESHOLDS["low"]:
         return "Low"
@@ -77,7 +96,21 @@ def classify_density(count: int) -> str:
 # ---------------------------------------------------------------------------
 
 def _resolve_names(prediction: Any, model: YOLO) -> dict[int, str]:
-    """Return a {class_id: class_name} mapping from a YOLO prediction object."""
+    """
+    Extract the class-ID to class-name mapping from a YOLO prediction or model.
+
+    Parameters
+    ----------
+    prediction : Any
+        The Raw prediction result from YOLO.
+    model : YOLO
+        The YOLO model instance.
+
+    Returns
+    -------
+    dict[int, str]
+        Mapping of class-ID (int) to name (str).
+    """
     names_map = getattr(prediction, "names", None) or getattr(model, "names", None)
     if isinstance(names_map, dict):
         return {int(k): str(v) for k, v in names_map.items()}
@@ -94,11 +127,25 @@ def _draw_custom_boxes(
     confidence_threshold: float,
 ) -> np.ndarray:
     """
-    Draw colour-coded bounding boxes on *frame* (modified in-place, copy returned).
+    Render colour-coded bounding boxes and labels onto the image frame.
 
-    Each box includes:
-      - A filled label strip with class name + confidence score
-      - A 2-pixel border in the class-specific colour
+    Parameters
+    ----------
+    frame : np.ndarray
+        The BGR image frame to annotate.
+    boxes_data : Any
+        YOLO bounding box data.
+    names_map : dict[int, str]
+        Class ID mapping.
+    vehicle_classes : frozenset[str]
+        Set of classes considered for drawing.
+    confidence_threshold : float
+        Min confidence for a box to be rendered.
+
+    Returns
+    -------
+    np.ndarray
+        The annotated image frame (copy of original).
     """
     out = frame.copy()
     if boxes_data is None or boxes_data.xyxy is None:
@@ -118,10 +165,10 @@ def _draw_custom_boxes(
         colour = CLASS_COLOURS.get(class_name, (200, 200, 200))
         x1, y1, x2, y2 = map(int, xyxy)
 
-        # Bounding box
+        # Draw main rectangle
         cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2)
 
-        # Label strip
+        # Add label strip
         label = f"{class_name} {conf:.2f}"
         (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         strip_y2 = max(y1, lh + baseline + 4)
@@ -146,11 +193,30 @@ def run_tracking(
     min_motorcycle_conf: float = 0.25,
 ) -> Any:
     """
-    Run native SOTA tracking (ByteTrack) on a single frame.
-    Returns the Results object from ultralytics.
+    Execute object detection and temporal tracking on a single frame.
+
+    Parameters
+    ----------
+    model : YOLO
+        The pretrained YOLO model instance.
+    frame : np.ndarray
+        The current video frame (BGR).
+    confidence_threshold : float
+        Minimum confidence for car/truck/bus detection.
+    iou_threshold : float
+        NMS IoU threshold for overlapping detections.
+    inference_size : int
+        Resolution to resize the frame for model input.
+    tracker_type : str
+        Configuration filename for the tracker (e.g., 'bytetrack.yaml').
+    min_motorcycle_conf : float
+        Lower threshold specifically for detecting motorcycles.
+
+    Returns
+    -------
+    Any
+        The first Ultralytics 'Results' object for the frame.
     """
-    # We run the internal model at the lowest common denominator
-    # to catch small objects, then refine in to_tracks()
     run_conf = min(confidence_threshold, min_motorcycle_conf)
     
     results = model.track(
@@ -167,11 +233,28 @@ def run_tracking(
 
 
 # ---------------------------------------------------------------------------
-# Slicing Aided Hyper Inference (SAHI-Lite)
+# ---------------------------------------------------------------------------
+# Tiled Inference Pipeline (Industrial Detection)
 # ---------------------------------------------------------------------------
 
-def _get_tiles(frame: np.ndarray, tile_size: int = 640, overlap: float = 0.25) -> list[dict]:
-    """Slice a large frame into overlapping tiles for high-res detection."""
+def _get_tiles(frame: np.ndarray, tile_size: int = 640, overlap: float = 0.25) -> list[dict[str, Any]]:
+    """
+    Divide a frame into overlapping tiles for high-resolution inference.
+
+    Parameters
+    ----------
+    frame : np.ndarray
+        The input image frame.
+    tile_size : int
+        Dimension of each square tile.
+    overlap : float
+        Percentage overlap between adjacent tiles (0.0 - 1.0).
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        List of tile dictionaries containing 'image', 'x_off', and 'y_off'.
+    """
     h, w = frame.shape[:2]
     stride = int(tile_size * (1 - overlap))
     
@@ -181,7 +264,7 @@ def _get_tiles(frame: np.ndarray, tile_size: int = 640, overlap: float = 0.25) -
             tile = frame[y:y+tile_size, x:x+tile_size]
             tiles.append({"image": tile, "x_off": x, "y_off": y})
             
-    # Add bottom-right tile if dimensions not divisible by stride
+    # Add bottom-right tile if dimensions are not perfectly divisible
     if (h - tile_size) % stride != 0 or (w - tile_size) % stride != 0:
         y_end = h - tile_size
         x_end = w - tile_size
@@ -190,12 +273,26 @@ def _get_tiles(frame: np.ndarray, tile_size: int = 640, overlap: float = 0.25) -
     return tiles
 
 
-def _apply_global_nms(detections: list[dict], iou_threshold: float = 0.65) -> list[dict]:
-    """Merge overlapping detections from multiple tiles using Greedy NMS."""
+def _apply_global_nms(detections: list[dict[str, Any]], iou_threshold: float = 0.65) -> list[dict[str, Any]]:
+    """
+    Perform Non-Maximum Suppression (NMS) across detections from all tiles.
+
+    Parameters
+    ----------
+    detections : list[dict[str, Any]]
+        Consolidated list of detections with localized coordinates.
+    iou_threshold : float
+        Overlap threshold for suppression.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Filtered list of unique detections.
+    """
     if not detections:
         return []
         
-    # Sort by confidence descending
+    # Sort by confidence descending for greedy selection
     detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
     keep = []
     
@@ -218,8 +315,20 @@ def _apply_global_nms(detections: list[dict], iou_threshold: float = 0.65) -> li
     return keep
 
 
-def _calculate_iou(box1: list[float], box2: list[float]) -> float:
-    """Calculate Intersection-over-Union (IoU) of two bbox coordinates."""
+def _calculate_iou(box1: Sequence[float], box2: Sequence[float]) -> float:
+    """
+    Calculate the Intersection-over-Union (IoU) of two bounding boxes.
+
+    Parameters
+    ----------
+    box1, box2 : Sequence[float]
+        Bounding boxes in [x1, y1, x2, y2] format.
+
+    Returns
+    -------
+    float
+        IoU value between 0.0 and 1.0.
+    """
     x1, y1, x2, y2 = box1
     xx1, yy1, xx2, yy2 = box2
     
@@ -228,32 +337,53 @@ def _calculate_iou(box1: list[float], box2: list[float]) -> float:
     ix2 = min(x2, xx2)
     iy2 = min(y2, yy2)
     
-    w = max(0, ix2 - ix1)
-    h = max(0, iy2 - iy1)
+    w = max(0.0, ix2 - ix1)
+    h = max(0.0, iy2 - iy1)
     inter = w * h
     
     area1 = (x2 - x1) * (y2 - y1)
     area2 = (xx2 - xx1) * (yy2 - yy1)
     union = area1 + area2 - inter + 1e-6
     
-    return inter / union
+    return float(inter / union)
 
 
-def run_tiled_detection(
+def run_tiled_inference(
     model: YOLO,
     frame: np.ndarray,
     confidence_threshold: float = 0.20,
     iou_threshold: float = 0.65,
     tile_size: int = 640,
-) -> list[dict]:
+    overlap: float = 0.25,
+) -> list[dict[str, Any]]:
     """
-    Run SAHI-Lite detection on tiles and merge results.
-    Captures small objects that standard full-frame inference misses.
+    Run high-resolution tiled inference to detect small objects in dense scenes.
+
+    Parameters
+    ----------
+    model : YOLO
+        The pretrained YOLO model instance.
+    frame : np.ndarray
+        The large image frame (BGR).
+    confidence_threshold : float
+        Min confidence for per-tile detections.
+    iou_threshold : float
+        Global NMS overlap threshold.
+    tile_size : int
+        Size of each square inference tile.
+    overlap : float
+        Percentage overlap between tiles.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Consolidated detections with globally-mapped coordinates.
     """
-    tiles = _get_tiles(frame, tile_size=tile_size)
-    all_detections = []
+    tiles = _get_tiles(frame, tile_size, overlap)
+    raw_detections = []
     
     for tile in tiles:
+        # Run inference on tile
         results = model.predict(
             tile["image"], 
             conf=confidence_threshold, 
@@ -261,34 +391,34 @@ def run_tiled_detection(
             verbose=False
         )
         prediction = results[0]
-        names_map = _resolve_names(prediction, model)
-        
-        if prediction.boxes is not None:
-            xyxy = prediction.boxes.xyxy.cpu().numpy()
-            conf = prediction.boxes.conf.cpu().numpy()
-            clss = prediction.boxes.cls.cpu().numpy().astype(int)
+        if prediction.boxes is None:
+            continue
             
-            for i in range(len(clss)):
-                c_name = names_map.get(clss[i])
-                if c_name not in VEHICLE_CLASSES:
-                    continue
+        names_map = _resolve_names(prediction, model)
+        xyxy = prediction.boxes.xyxy.cpu().numpy()
+        conf = prediction.boxes.conf.cpu().numpy()
+        clss = prediction.boxes.cls.cpu().numpy().astype(int)
+        
+        for i in range(len(clss)):
+            class_name = names_map.get(clss[i], "unknown")
+            if class_name not in VEHICLE_CLASSES:
+                continue
                 
-                # Shift coordinates back to original frame
-                box = [
-                    xyxy[i][0] + tile["x_off"],
-                    xyxy[i][1] + tile["y_off"],
-                    xyxy[i][2] + tile["x_off"],
-                    xyxy[i][3] + tile["y_off"]
-                ]
-                
-                all_detections.append({
-                    "bbox": box,
-                    "confidence": float(conf[i]),
-                    "class_name": c_name
-                })
-                
-    # Global merge
-    return _apply_global_nms(all_detections, iou_threshold=iou_threshold)
+            # Map box back to global coordinates
+            global_box = [
+                float(xyxy[i][0] + tile["x_off"]),
+                float(xyxy[i][1] + tile["y_off"]),
+                float(xyxy[i][2] + tile["x_off"]),
+                float(xyxy[i][3] + tile["y_off"])
+            ]
+            raw_detections.append({
+                "bbox": global_box,
+                "confidence": float(conf[i]),
+                "class_name": class_name
+            })
+            
+    # Apply Global NMS to remove duplicates at tile boundaries
+    return _apply_global_nms(raw_detections, iou_threshold)
 
 
 def to_tracks(
@@ -298,9 +428,26 @@ def to_tracks(
     min_motorcycle_conf: float = 0.25,
 ) -> list[Track]:
     """
-    Convert ultralytics Results object into a list of internal Track objects.
-    
-    This is the bridge between SOTA tracking and our analytic modules.
+    Convert Ultralytics Results object into a list of internal Track objects.
+
+    Acts as the bridge between the raw YOLO/ByteTrack detection output and 
+    the pipeline's analytic modules. Filters by confidence and class.
+
+    Parameters
+    ----------
+    results : Any
+        The results object returned by model.track().
+    names_map : dict[int, str]
+        Mapping of class IDs to human-readable names.
+    confidence_threshold : float
+        Min confidence for main vehicle classes (car, truck, bus).
+    min_motorcycle_conf : float
+        Min confidence for motorcycle detections.
+
+    Returns
+    -------
+    list[Track]
+        List of confirmed/tentative tracks for the current frame.
     """
     from src.tracker import Track
     

@@ -1,13 +1,9 @@
 """
-density_analyzer.py — Advanced traffic density analysis with lane-awareness.
+density_analyzer.py — Lane-aware traffic density and congestion engine.
 
-Capabilities:
-  • Frame-level vehicle counting per lane (configurable lane polygons)
-  • Temporal smoothing via exponential moving average (EMA)
-  • Vehicle flow rate estimation (vehicles / minute)
-  • Occupancy ratio: fraction of detection-zone area covered by vehicles
-  • Congestion score (0–100) combining count, occupancy, and flow rate
-  • Rolling history for trend detection (rising / stable / falling)
+Provides high-fidelity spatial analysis of traffic volume, including 
+polygonal ROI filtering, temporal EMA smoothing, flow rate estimation, 
+and heuristic congestion scoring.
 """
 
 from __future__ import annotations
@@ -33,29 +29,51 @@ logger = get_logger(__name__)
 @dataclass
 class Lane:
     """
-    A polygonal region of interest representing a traffic lane.
+    Polygonal Region of Interest (ROI) representing a traffic lane.
 
     Parameters
     ----------
-    name    : Human-readable identifier, e.g. "Lane 1".
-    polygon : (N, 2) array of (x, y) vertices in image coordinates.
-              Counter-clockwise or clockwise — cv2.pointPolygonTest handles both.
+    name : str
+        Human-readable lane identifier.
+    polygon : np.ndarray
+        Array of (x, y) vertices defining the lane boundary 
+        (shape: [N, 2], dtype: float32).
     """
-    name:    str
-    polygon: np.ndarray   # shape (N, 2), dtype float32
+    name: str
+    polygon: np.ndarray
 
     def __post_init__(self) -> None:
         self.polygon = np.asarray(self.polygon, dtype=np.float32)
 
     def contains_centre(self, cx: float, cy: float) -> bool:
-        """True if point (cx, cy) lies inside or on the boundary of this lane."""
-        result = cv2.pointPolygonTest(self.polygon, (cx, cy), measureDist=False)
-        return result >= 0
+        """
+        Determine if a spatial point lies within the lane polygon.
+
+        Parameters
+        ----------
+        cx : float
+            X-coordinate.
+        cy : float
+            Y-coordinate.
+
+        Returns
+        -------
+        bool
+            True if the point is inside or on the boundary.
+        """
+        return cv2.pointPolygonTest(self.polygon, (cx, cy), measureDist=False) >= 0
 
     def area(self) -> float:
-        """Polygon area via Shoelace formula."""
+        """
+        Calculate the spatial area of the lane polygon.
+
+        Returns
+        -------
+        float
+            Pixel area of the ROI.
+        """
         pts = self.polygon
-        n   = len(pts)
+        n = len(pts)
         if n < 3:
             return 0.0
         x, y = pts[:, 0], pts[:, 1]
@@ -96,44 +114,52 @@ class FrameDensity:
 
 class DensityAnalyzer:
     """
-    Analyses vehicle density from a sequence of tracked detections.
+    Industrial-grade traffic volume and congestion analysis engine.
+
+    Monitors vehicle counts across multiple polygonal lanes, calculates 
+    smoothed volume metrics using EMA, and identifies emergent traffic 
+    patterns (trends) and throughput (flow).
 
     Parameters
     ----------
-    lanes           : Ordered list of Lane objects.
-    ema_alpha       : EMA smoothing factor (0 < α ≤ 1).
-    flow_window_s   : Duration in seconds used to estimate flow rate.
-    low_threshold   : Total count below which density is "Low".
-    high_threshold  : Total count above which density is "High".
-    fps             : Expected video frame rate (used for flow estimation).
+    lanes : list[Lane]
+        A collection of Lane definitions for spatial segmentation.
+    ema_alpha : float
+        The smoothing constant for volume metrics.
+    flow_window_s : float
+        Temporal window for throughput estimation (seconds).
+    low_threshold : int
+        Volume threshold for 'Low' density classification.
+    high_threshold : int
+        Volume threshold for 'High' density classification.
+    fps : float
+        Source video frame rate.
     """
 
     def __init__(
         self,
-        lanes:           list[Lane],
-        ema_alpha:       float = 0.20,
-        flow_window_s:   float = 60.0,
-        low_threshold:   int   = 10,
-        high_threshold:  int   = 25,
-        fps:             float = 30.0,
+        lanes: list[Lane],
+        ema_alpha: float = 0.20,
+        flow_window_s: float = 60.0,
+        low_threshold: int = 10,
+        high_threshold: int = 25,
+        fps: float = 30.0,
     ) -> None:
         if not 0 < ema_alpha <= 1:
             raise ValueError(f"ema_alpha must be in (0, 1]. Got {ema_alpha}.")
 
-        self.lanes          = lanes
-        self.alpha          = ema_alpha
-        self.flow_window_s  = flow_window_s
-        self.low_threshold  = low_threshold
+        self.lanes = lanes
+        self.alpha = ema_alpha
+        self.flow_window_s = flow_window_s
+        self.low_threshold = low_threshold
         self.high_threshold = high_threshold
-        self.fps            = fps
+        self.fps = fps
 
-        # State
+        # Analytical State
         self._ema: float = 0.0
         self._frame_idx: int = 0
         self._t0_ms: float = 0.0
         self._history: deque[FrameDensity] = deque(maxlen=500)
-
-        # Flow estimation: store (timestamp_ms, count) per frame
         self._flow_buffer: deque[tuple[float, int]] = deque()
 
     # ------------------------------------------------------------------
@@ -151,16 +177,24 @@ class DensityAnalyzer:
 
     def update(
         self,
-        tracks:       Sequence[Track],
+        tracks: Sequence[Track],
         timestamp_ms: float | None = None,
     ) -> FrameDensity:
         """
-        Process a frame's confirmed tracks and return density metrics.
+        Analyse a single frame's vehicle tracks to derive density metrics.
 
         Parameters
         ----------
-        tracks       : Sequence of Track objects from the current frame.
-        timestamp_ms : Wall-clock time in ms. Defaults to frame_idx / fps * 1000.
+        tracks : Sequence[Track]
+            Confirmed vehicle tracks for the current frame.
+        timestamp_ms : float | None
+            Millisecond timestamp for the frame. Defaults to calculation 
+            based on frame index and FPS.
+
+        Returns
+        -------
+        FrameDensity
+            A snapshot of calculated spatial and temporal metrics.
         """
         if timestamp_ms is None:
             timestamp_ms = self._frame_idx / self.fps * 1_000.0
@@ -168,7 +202,7 @@ class DensityAnalyzer:
         if self._frame_idx == 0:
             self._t0_ms = timestamp_ms
 
-        # --- Per-lane and per-class counting ---------------------------------
+        # Spatial aggregation per lane and classification
         lane_counts: dict[str, int] = {lane.name: 0 for lane in self.lanes}
         class_counts: dict[str, int] = {}
 
@@ -183,72 +217,93 @@ class DensityAnalyzer:
 
         total = sum(lane_counts.values()) if len(self.lanes) > 1 else sum(class_counts.values())
 
-        # --- EMA smoothing ---------------------------------------------------
+        # Temporal smoothing for stable count reporting
         if self._frame_idx == 0:
             self._ema = float(total)
         else:
             self._ema = self.alpha * total + (1 - self.alpha) * self._ema
 
-        # --- Occupancy ratio -------------------------------------------------
+        # Space-domain occupancy calculation
         occupancy = self._compute_occupancy(tracks)
 
-        # --- Flow rate (vehicles / min) --------------------------------------
+        # Time-domain throughput buffering
         self._flow_buffer.append((timestamp_ms, total))
         self._prune_flow_buffer(timestamp_ms)
 
-        # --- Congestion score (0–100) ----------------------------------------
+        # Heuristic congestion derivation
         congestion = self._compute_congestion(total, occupancy)
 
-        # --- Density label ---------------------------------------------------
+        # Statistical classification
         label = self._classify(int(round(self._ema)))
 
         fd = FrameDensity(
-            frame_idx        = self._frame_idx,
-            timestamp_ms     = timestamp_ms,
-            counts_per_lane  = lane_counts,
-            total_count      = total,
-            density_label    = label,
-            occupancy_ratio  = round(occupancy, 4),
-            congestion_score = round(congestion, 2),
-            ema_count        = round(self._ema, 2),
-            class_breakdown  = class_counts,
+            frame_idx=self._frame_idx,
+            timestamp_ms=timestamp_ms,
+            counts_per_lane=lane_counts,
+            total_count=total,
+            density_label=label,
+            occupancy_ratio=round(occupancy, 4),
+            congestion_score=round(congestion, 2),
+            ema_count=round(self._ema, 2),
+            class_breakdown=class_counts,
         )
 
         self._history.append(fd)
         self._frame_idx += 1
 
         logger.debug(
-            "Frame %d | count=%d | ema=%.1f | density=%s | congestion=%.1f",
+            "Frame %d | total=%d | ema=%.1f | label=%s | cong=%.1f",
             fd.frame_idx, total, self._ema, label, congestion,
         )
 
         return fd
 
     def flow_rate_per_minute(self) -> float:
-        """Estimate vehicle throughput (vehicles per minute) over the flow window."""
+        """
+        Estimate current vehicle throughput.
+
+        Calculated as the sum of vehicle sightings across the observation 
+        window normalised to a one-minute interval.
+
+        Returns
+        -------
+        float
+            Estimated vehicles per minute.
+        """
         buf = list(self._flow_buffer)
         if len(buf) < 2:
             return 0.0
         total_vehicles = sum(c for _, c in buf)
-        duration_ms    = buf[-1][0] - buf[0][0]
+        duration_ms = buf[-1][0] - buf[0][0]
         if duration_ms <= 0:
             return 0.0
         return total_vehicles / (duration_ms / 60_000.0)
 
-    def trend(self, window: int = 10) -> str:
+    def trend(self, window: int = 15) -> str:
         """
-        Return traffic trend over the last *window* frames.
-        One of: "rising", "stable", "falling".
+        Identify the temporal traffic volume trend using linear regression.
+
+        Parameters
+        ----------
+        window : int
+            Number of recent frames to analyse.
+
+        Returns
+        -------
+        str
+            'rising', 'stable', or 'falling'.
         """
         hist = list(self._history)[-window:]
-        if len(hist) < 3:
+        if len(hist) < 5:
             return "stable"
 
         counts = [fd.ema_count for fd in hist]
-        slope  = np.polyfit(range(len(counts)), counts, 1)[0]
-        if slope > 0.5:
+        slope = np.polyfit(range(len(counts)), counts, 1)[0]
+        
+        # Deadband thresholds for stability
+        if slope > 0.05:
             return "rising"
-        if slope < -0.5:
+        elif slope < -0.05:
             return "falling"
         return "stable"
 
@@ -268,6 +323,19 @@ class DensityAnalyzer:
     # ------------------------------------------------------------------
 
     def _classify(self, count: int) -> str:
+        """
+        Map a vehicle count to a discrete density category.
+
+        Parameters
+        ----------
+        count : int
+            The total vehicle count to classify.
+
+        Returns
+        -------
+        str
+            'Low', 'Medium', or 'High'.
+        """
         if count < self.low_threshold:
             return "Low"
         if count <= self.high_threshold:
@@ -276,8 +344,17 @@ class DensityAnalyzer:
 
     def _compute_occupancy(self, tracks: Sequence[Track]) -> float:
         """
-        Fraction of total lane area covered by vehicle bounding boxes.
-        Clipped to [0, 1].
+        Calculate the spatial occupancy ratio within the configured lanes.
+
+        Parameters
+        ----------
+        tracks : Sequence[Track]
+            Active vehicle tracks.
+
+        Returns
+        -------
+        float
+            The fraction of lane area covered by vehicle bounding boxes [0-1].
         """
         total_lane_area = sum(lane.area() for lane in self.lanes)
         if total_lane_area <= 0:
@@ -285,6 +362,7 @@ class DensityAnalyzer:
 
         vehicle_area = 0.0
         for track in tracks:
+            # Use raw bbox from the track object
             x1, y1, x2, y2 = track.bbox
             vehicle_area += max(0.0, x2 - x1) * max(0.0, y2 - y1)
 

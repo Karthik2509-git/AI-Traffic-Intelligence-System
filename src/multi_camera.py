@@ -1,14 +1,9 @@
 """
-multi_camera.py — Multi-camera traffic simulation and comparative analysis.
+multi_camera.py — Multi-sensor traffic orchestration and comparative telemetry.
 
-Enables running multiple TrafficPipeline instances in parallel (one per camera)
-and aggregating / comparing their metrics for cross-junction decision making.
-
-Features:
-  • Named camera sources with independent pipeline configs
-  • Per-camera metric snapshots (density, congestion, signal recommendations)
-  • Cross-camera comparative analysis (busiest junction, risk ranking)
-  • Aggregated system-wide statistics
+Provides a unified interface for managing multiple TrafficPipeline instances in 
+parallel, enabling cross-junction metric aggregation, risk-based priority 
+ranking, and global system state monitoring.
 """
 
 from __future__ import annotations
@@ -88,19 +83,18 @@ class CameraSource:
 
 class MultiCameraManager:
     """
-    Manages multiple TrafficPipeline instances for comparative analysis.
+    Orchestration layer for multi-junction traffic intelligence.
 
-    Usage
-    -----
-    cameras = [
-        CameraSource("Junction A", "video_a.mp4"),
-        CameraSource("Junction B", "video_b.mp4"),
-    ]
-    manager = MultiCameraManager(cameras)
+    Manages a fleet of TrafficPipeline instances, synchronizing frame 
+    processing and providing high-level comparative analytics (e.g., 
+    identifying the most congested nodes in the network).
 
-    # Process one frame from each camera
-    snapshots = manager.process_all_next()
-    summary   = manager.system_summary()
+    Parameters
+    ----------
+    cameras : Sequence[CameraSource]
+        A collection of camera feed definitions.
+    default_config : PipelineConfig | None
+        Global configuration fallback for camera pipelines.
     """
 
     def __init__(
@@ -114,20 +108,19 @@ class MultiCameraManager:
         self._cameras = list(cameras)
         self._default_config = default_config or PipelineConfig()
 
-        # Build pipelines
+        # Orchestration state
         self._pipelines: dict[str, TrafficPipeline] = {}
-        self._snapshots: dict[str, CameraSnapshot]  = {}
-        self._caps: dict[str, Any] = {}
+        self._snapshots: dict[str, CameraSnapshot] = {}
 
         for cam in self._cameras:
             cfg = cam.config or self._default_config
             pipeline = TrafficPipeline(
-                source = cam.source,
-                lanes  = cam.lanes,
-                config = cfg,
+                source=cam.source,
+                lanes=cam.lanes,
+                config=cfg,
             )
-            self._pipelines[cam.name]  = pipeline
-            self._snapshots[cam.name]  = CameraSnapshot(camera_name=cam.name)
+            self._pipelines[cam.name] = pipeline
+            self._snapshots[cam.name] = CameraSnapshot(camera_name=cam.name)
 
         logger.info("MultiCameraManager initialised with %d cameras.", len(cameras))
 
@@ -156,17 +149,21 @@ class MultiCameraManager:
         timestamp_ms: float | None = None,
     ) -> CameraSnapshot:
         """
-        Process a single frame for one camera and update its snapshot.
+        Execute the primary vision pipeline on a single frame for a specific camera.
 
         Parameters
         ----------
-        camera_name  : Name of the camera to process.
-        frame        : BGR image array.
-        timestamp_ms : Optional wall-clock timestamp in ms.
+        camera_name : str
+            Identifier of the target camera.
+        frame : np.ndarray
+            Current image frame (BGR format).
+        timestamp_ms : float | None
+            Millisecond timestamp for telemetry synchronization.
 
         Returns
         -------
-        Updated CameraSnapshot for this camera.
+        CameraSnapshot
+            Updated metrics and annotations for the camera node.
         """
         pipeline = self.get_pipeline(camera_name)
         result   = pipeline.process_frame(frame, timestamp_ms)
@@ -181,11 +178,15 @@ class MultiCameraManager:
 
     def system_summary(self) -> SystemSummary:
         """
-        Aggregate metrics across all cameras and produce a system-wide summary.
+        Produce a high-level coordination summary across all camera nodes.
+
+        Aggregates congestion metrics and volume counts to identify the 
+        intersection with the highest operational risk.
 
         Returns
         -------
-        SystemSummary with per-camera snapshots + aggregated stats.
+        SystemSummary
+            Global system health and per-node snapshots.
         """
         snaps = list(self._snapshots.values())
 
@@ -194,12 +195,12 @@ class MultiCameraManager:
             float(np.mean([s.congestion_score for s in snaps])) if snaps else 0.0
         )
 
-        # Sort by congestion score descending
+        # Priority ranking based on real-time congestion
         ranked = sorted(snaps, key=lambda s: s.congestion_score, reverse=True)
         risk_ranking = [s.camera_name for s in ranked]
-        busiest = risk_ranking[0] if risk_ranking else "—"
+        busiest = risk_ranking[0] if risk_ranking else "N/A"
 
-        # System status
+        # Determine global operational status
         if avg_congestion > 70:
             status = "Critical"
         elif avg_congestion > 40:
@@ -208,34 +209,38 @@ class MultiCameraManager:
             status = "Normal"
 
         return SystemSummary(
-            total_cameras  = len(snaps),
-            total_vehicles = total_vehicles,
-            avg_congestion = round(avg_congestion, 2),
-            busiest_camera = busiest,
-            risk_ranking   = risk_ranking,
-            per_camera     = snaps,
-            system_status  = status,
+            total_cameras=len(snaps),
+            total_vehicles=total_vehicles,
+            avg_congestion=round(avg_congestion, 2),
+            busiest_camera=busiest,
+            risk_ranking=risk_ranking,
+            per_camera=snaps,
+            system_status=status,
         )
 
     def comparative_table(self) -> list[dict[str, Any]]:
         """
-        Return a list of dicts suitable for pd.DataFrame display.
+        Formulate a structured comparative dataset for analytics reporting.
 
-        Each dict contains key metrics for one camera.
+        Returns
+        -------
+        list[dict[str, Any]]
+            A tabular-friendly collection of latest telemetry from all cameras.
         """
         rows: list[dict[str, Any]] = []
         for snap in self._snapshots.values():
             row = {
-                "Camera":           snap.camera_name,
-                "Vehicles":         snap.total_vehicles,
-                "Density":          snap.density_label,
-                "Congestion":       round(snap.congestion_score, 1),
-                "EMA Count":        round(snap.ema_count, 1),
-                "Occupancy":        round(snap.occupancy, 3),
-                "Trend":            snap.trend,
-                "Flow (veh/min)":   round(snap.flow_per_min, 1),
-                "FPS":              round(snap.fps, 1),
+                "Camera": snap.camera_name,
+                "Vehicles": snap.total_vehicles,
+                "Density": snap.density_label,
+                "Congestion": round(snap.congestion_score, 1),
+                "EMA Count": round(snap.ema_count, 1),
+                "Occupancy": round(snap.occupancy, 3),
+                "Trend": snap.trend,
+                "Flow (veh/min)": round(snap.flow_per_min, 1),
+                "FPS": round(snap.fps, 1),
             }
+            # Include phase recommendations if available
             if snap.schedule:
                 for lout in snap.schedule.lanes:
                     row[f"Green ({lout.lane_name})"] = f"{lout.green_time_s}s"

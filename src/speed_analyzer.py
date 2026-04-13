@@ -1,22 +1,9 @@
 """
-speed_analyzer.py - Vehicle speed and direction estimation from tracker data.
+speed_analyzer.py — Vehicle velocity and trajectory estimation engine.
 
-Uses Kalman filter track displacement data to compute real-time speed
-estimates for each tracked vehicle.
-
-Method
-------
-  1. Track displacement: distance_px = ||center_t - center_{t-1}|| per frame
-  2. Convert to m/s using configurable pixels_per_meter calibration
-  3. Apply EMA smoothing to reduce single-frame noise
-  4. Classify: stopped, slow, normal, fast, speeding
-  5. Detect speed violations and report to anomaly detector
-
-Calibration
------------
-  The pixels_per_meter factor depends on camera angle and height.
-  Default: 8.0 px/m (typical for a 640px-wide view of a 80m road).
-  To calibrate: measure a known real-world distance in the frame.
+Computes real-time speed and heading vectors for tracked objects using 
+temporal displacement analysis. Includes multi-stage filtering 
+(EMA + Median) and outlier rejection for high-accuracy telemetry.
 """
 
 from __future__ import annotations
@@ -69,18 +56,18 @@ class SpeedConfig:
 
 class SpeedAnalyzer:
     """
-    Real-time vehicle speed and direction estimator.
+    Real-time telemetry engine for vehicle speed and heading estimation.
 
-    Maintains per-track state to compute speed from frame-to-frame
-    displacement, with EMA smoothing.
+    Tracks frame-to-frame displacement vectors and applies pixel-to-meter 
+    calibration, statistical outlier rejection, and multi-stage 
+    smoothing to provide stable speed metrics.
 
-    Usage
-    -----
-    analyzer = SpeedAnalyzer(fps=30.0)
-    speeds = analyzer.update(tracks)
-
-    for info in speeds:
-        print(f"Track {info.track_id}: {info.speed_kmh:.1f} km/h ({info.speed_class})")
+    Parameters
+    ----------
+    fps : float
+        Video stream frame rate.
+    config : SpeedConfig | None
+        Configuration parameters for telemetry and calibration.
     """
 
     def __init__(
@@ -91,12 +78,11 @@ class SpeedAnalyzer:
         self.fps = fps
         self.cfg = config or SpeedConfig()
 
-        # Per-track state: {track_id: {"prev_center": (x, y), "speed_ema": float}}
+        # Per-track state: {track_id: telemetry_buffer}
         self._track_state: dict[int, dict[str, Any]] = {}
 
-        # Overall statistics
         self._total_measurements = 0
-        self._total_violations   = 0
+        self._total_violations = 0
 
         logger.info(
             "SpeedAnalyzer initialised: fps=%.1f, px/m=%.1f, limit=%.0f km/h",
@@ -107,17 +93,19 @@ class SpeedAnalyzer:
     # Main update
     # ------------------------------------------------------------------
 
-    def update(self, tracks: list[Track]) -> list[VehicleSpeedInfo]:
+    def update(self, tracks: Sequence[Track]) -> list[VehicleSpeedInfo]:
         """
-        Compute speed for all currently tracked vehicles.
+        Analyse vehicle tracks and compute current telemetry.
 
         Parameters
         ----------
-        tracks : List of confirmed Track objects from the SORT tracker.
+        tracks : Sequence[Track]
+            List of confirmed vehicle tracks from the tracking engine.
 
         Returns
         -------
-        List of VehicleSpeedInfo, one per track with valid speed data.
+        list[VehicleSpeedInfo]
+            List of valid telemetry records for the current frame.
         """
         results: list[VehicleSpeedInfo] = []
         active_ids: set[int] = set()
@@ -142,39 +130,35 @@ class SpeedAnalyzer:
                 speed_ms = dist_m * self.fps
                 speed_kmh = speed_ms * 3.6
 
-                # --- NEW: Outlier Rejection ---
-                # 1. Physical impossiblity check
+                # Outlier rejection: Physical impossibility check
                 if speed_kmh > self.cfg.max_physical_speed:
                     logger.debug("Speed outlier rejected (physically impossible) for #%d: %.1f km/h", tid, speed_kmh)
                     state["prev_center"] = (cx, cy)
                     continue
 
-                # 2. Acceleration check (sudden jumps)
+                # Outlier rejection: Acceleration check (sudden jumps)
                 prev_speed = state.get("speed_ema", 0.0)
                 if state["hits"] > self.cfg.min_speed_frames and abs(speed_kmh - prev_speed) > 40:
                     logger.debug("Speed outlier rejected (acceleration spike) for #%d: %.1f km/h", tid, speed_kmh)
                     state["prev_center"] = (cx, cy)
                     continue
 
-                # --- NEW: Minimum Track Age ---
-                # Don't report speed until the track is stable
+                # Minimum Track Age: Ensure stability before reporting
                 if state["hits"] < self.cfg.min_speed_frames:
                     state["prev_center"] = (cx, cy)
                     state["speed_ema"] = speed_kmh  # seed the EMA
                     continue
 
-                # --- NEW: Median Filtering ---
-                # Maintain a history of raw speed measurements
+                # Median Filtering: History-based outlier rejection
                 if "speed_history" not in state:
                     state["speed_history"] = []
                 state["speed_history"].append(speed_kmh)
                 if len(state["speed_history"]) > self.cfg.median_window:
                     state["speed_history"].pop(0)
-                
-                # Compute median to reject outliers and spikes
+
                 median_speed = float(np.median(state["speed_history"]))
-                
-                # EMA smoothing on top of median for fluid display
+
+                # Multi-stage smoothing: EMA on top of median filter
                 prev_ema = state.get("speed_ema", median_speed)
                 smoothed = (self.cfg.ema_alpha * median_speed
                             + (1 - self.cfg.ema_alpha) * prev_ema)
@@ -224,6 +208,19 @@ class SpeedAnalyzer:
     # ------------------------------------------------------------------
 
     def _classify_speed(self, speed_kmh: float) -> str:
+        """
+        Map a numeric speed value to a descriptive traffic category.
+
+        Parameters
+        ----------
+        speed_kmh : float
+            Smoothing velocity in km/h.
+
+        Returns
+        -------
+        str
+            Category string (e.g., 'speeding').
+        """
         if speed_kmh <= self.cfg.stopped_max:
             return "stopped"
         elif speed_kmh <= self.cfg.slow_max:
@@ -240,7 +237,20 @@ class SpeedAnalyzer:
     # ------------------------------------------------------------------
 
     def get_summary(self, results: list[VehicleSpeedInfo]) -> dict[str, Any]:
-        """Compute aggregate speed stats from the latest update."""
+        """
+        Compute high-level telemetry statistics for the current frame.
+
+        Parameters
+        ----------
+        results : list[VehicleSpeedInfo]
+            Current telemetry records.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary containing 'avg_speed_kmh', 'max_speed_kmh', 
+            'violations', and 'speed_distribution'.
+        """
         if not results:
             return {
                 "avg_speed_kmh": 0.0,

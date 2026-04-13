@@ -1,24 +1,9 @@
 """
-heatmap.py - Spatial traffic density heatmap generator.
+heatmap.py — Spatial traffic density visualization engine.
 
-Generates visual density heatmaps showing where vehicles concentrate,
-using Gaussian kernel smoothing over vehicle center points.
-
-Features:
-  - Accumulate vehicle centers over a configurable rolling window
-  - Gaussian blur for smooth kernel density estimation
-  - JET colormap for intuitive hot/cold visualization
-  - Temporal decay so older points gradually fade
-  - Alpha-blendable overlay on original frames
-  - Standalone heatmap export to file
-
-Usage
------
-    hm = HeatmapGenerator(frame_shape=(720, 1280))
-    hm.update(tracks)               # per frame
-    overlay  = hm.overlay(frame)    # blended output
-    pure_map = hm.render()          # standalone heatmap
-    hm.export("output/heatmaps/frame_100.jpg")
+Generates temporal heatmaps using Gaussian kernel density estimation (KDE) 
+over vehicle trajectories. Supports alpha-blended overlays and standalone 
+statistical map exports.
 """
 
 from __future__ import annotations
@@ -56,13 +41,18 @@ class HeatmapConfig:
 
 class HeatmapGenerator:
     """
-    Rolling spatial density heatmap over vehicle positions.
+    Rolling spatial density calculator and visualization generator.
 
-    The generator maintains an accumulation buffer that:
-      1. Receives new vehicle center points each frame
-      2. Applies temporal decay to gradually fade old points
-      3. Smooths the buffer with a Gaussian kernel
-      4. Maps the result to a colormap for visualization
+    Maintains a continuous accumulation buffer that tracks vehicle spatial 
+    concentration over time. Applies Gaussian smoothing and temporal decay 
+    to produce polished, analytical heatmaps.
+
+    Parameters
+    ----------
+    frame_shape : tuple[int, int]
+        The (height, width) dimensions of the target video stream.
+    config : HeatmapConfig | None
+        Configuration overrides. Defaults to global settings.
     """
 
     def __init__(
@@ -70,31 +60,24 @@ class HeatmapGenerator:
         frame_shape: tuple[int, int],
         config: HeatmapConfig | None = None,
     ) -> None:
-        """
-        Parameters
-        ----------
-        frame_shape : (height, width) of the video frame.
-        config      : Optional HeatmapConfig override.
-        """
         self.height, self.width = frame_shape
         self.cfg = config or HeatmapConfig()
 
-        # Resolution scaling (baseline = 640px)
+        # Scale detection radius and blur by resolution (baseline 640px)
         self._scale = self.width / 640.0
         self._scaled_radius = max(4, int(12 * self._scale))
-        self._scaled_blur   = max(5, int(self.cfg.blur_kernel * self._scale))
+        self._scaled_blur = max(5, int(self.cfg.blur_kernel * self._scale))
         if self._scaled_blur % 2 == 0:
             self._scaled_blur += 1
 
-        # Accumulation buffer (float32 for smooth decay)
+        # High-precision accumulation buffer
         self._accumulator = np.zeros((self.height, self.width), dtype=np.float32)
 
-        # Statistics
         self._total_points = 0
-        self._frame_count  = 0
+        self._frame_count = 0
 
         logger.info(
-            "HeatmapGenerator initialised: %dx%d, scale=%.2f, blur=%d",
+            "HeatmapGenerator initialised: %dx%d (scale=%.2f, blur=%d)",
             self.width, self.height, self._scale, self._scaled_blur,
         )
 
@@ -104,38 +87,42 @@ class HeatmapGenerator:
 
     def update(self, tracks: list[Track]) -> None:
         """
-        Add vehicle positions from the current frame.
+        Update the spatial density map with new vehicle positions.
 
         Parameters
         ----------
-        tracks : List of confirmed Track objects from the SORT tracker.
+        tracks : list[Track]
+            List of confirmed vehicle tracks for the current frame.
         """
-        # Apply temporal decay to existing accumulation
+        # Temporal decay for historical weight reduction
         self._accumulator *= self.cfg.decay_factor
 
-        # Add new vehicle centers
         for track in tracks:
             cx, cy = int(track.centre[0]), int(track.centre[1])
 
-            # Bounds check
+            # Safety bounds check
             if 0 <= cx < self.width and 0 <= cy < self.height:
-                # Add intensity in a small radius for smoother results
                 cv2.circle(
                     self._accumulator,
                     (cx, cy),
                     radius=self._scaled_radius,
                     color=self.cfg.intensity,
-                    thickness=-1,  # filled circle
+                    thickness=-1,
                 )
                 self._total_points += 1
 
         self._frame_count += 1
 
-    def update_from_detections(self, detections: list[dict]) -> None:
+    def update_from_detections(self, detections: Sequence[dict[str, Any]]) -> None:
         """
-        Alternative: update directly from detection result dicts.
+        Update the spatial density map directly from detection results.
 
-        Each dict should have 'bbox': [x1, y1, x2, y2].
+        Useful for single-frame analysis or when temporal tracking is disabled.
+
+        Parameters
+        ----------
+        detections : Sequence[dict[str, Any]]
+            Detections containing 'bbox' coordinates in [x1, y1, x2, y2] format.
         """
         self._accumulator *= self.cfg.decay_factor
 
@@ -159,54 +146,57 @@ class HeatmapGenerator:
 
     def render(self) -> np.ndarray:
         """
-        Generate a standalone heatmap image (BGR, uint8).
+        Generate a standalone heatmap visualization.
+
+        Applies Gaussian smoothing and colormapping to the accumulation buffer.
 
         Returns
         -------
-        Colormapped heatmap as a (H, W, 3) BGR image.
+        np.ndarray
+            The rendered heatmap (BGR, uint8).
         """
-        # Gaussian smoothing using scaled kernel
+        # Temporal smoothing for fluid visualization
         smoothed = cv2.GaussianBlur(self._accumulator, (self._scaled_blur, self._scaled_blur), 0)
 
-        # Normalize to 0-255
+        # Dynamic range normalization
         max_val = smoothed.max()
         if max_val > 0:
             normalized = (smoothed / max_val * 255).astype(np.uint8)
         else:
             normalized = np.zeros((self.height, self.width), dtype=np.uint8)
 
-        # Apply colormap
-        heatmap = cv2.applyColorMap(normalized, self.cfg.colormap)
-        return heatmap
+        # Map intensities to perceptual color space
+        return cv2.applyColorMap(normalized, self.cfg.colormap)
 
     def overlay(self, frame: np.ndarray) -> np.ndarray:
         """
-        Alpha-blend the heatmap over the original frame.
+        Alpha-blend the heatmap over a source image frame.
 
         Parameters
         ----------
-        frame : Original BGR video frame.
+        frame : np.ndarray
+            The reference BGR frame for the background.
 
         Returns
         -------
-        Blended BGR image.
+        np.ndarray
+            The blended analytical frame.
         """
         heatmap = self.render()
 
-        # Resize heatmap if frame dimensions differ
         if heatmap.shape[:2] != frame.shape[:2]:
             heatmap = cv2.resize(heatmap, (frame.shape[1], frame.shape[0]))
 
-        # Alpha blend
+        # High-transparency blend for background visibility
         blended = cv2.addWeighted(frame, 1 - self.cfg.alpha, heatmap, self.cfg.alpha, 0)
 
-        # Add legend text
+        # Add professional metadata overlay
         cv2.putText(
-            blended, "Traffic Density Heatmap",
+            blended, "Spatial Traffic Concentration",
             (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA,
         )
         cv2.putText(
-            blended, f"Accumulated over {self._frame_count} frames",
+            blended, f"Sample window: {self._frame_count} frames",
             (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA,
         )
 

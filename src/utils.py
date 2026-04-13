@@ -1,12 +1,8 @@
 """
-utils.py — Shared utilities across the AI-Traffic-Intelligence-System.
+utils.py — Shared infrastructure and utility functions.
 
-Provides:
-  • Centralised logging factory (structured, coloured, file+console)
-  • Project-root resolution
-  • YAML config loader with schema validation
-  • Frame-rate tracker for video processing
-  • Simple thread-safe ring buffer for rolling metric windows
+Provides centralized logging, path resolution, configuration management, 
+and performance monitoring tools used across the traffic intelligence system.
 """
 
 from __future__ import annotations
@@ -27,17 +23,40 @@ import yaml
 # ---------------------------------------------------------------------------
 
 def get_project_root() -> Path:
-    """Return the absolute path to the project root (parent of src/)."""
+    """
+    Resolve the absolute path to the core project directory.
+
+    Returns
+    -------
+    Path
+        Absolute path to the project root.
+    """
     return Path(__file__).resolve().parents[1]
 
 
 def get_output_dir() -> Path:
+    """
+    Resolve and ensure existence of the project output directory.
+
+    Returns
+    -------
+    Path
+        Path to the 'output/' directory.
+    """
     d = get_project_root() / "output"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def get_data_dir() -> Path:
+    """
+    Resolve the path to the project data directory.
+
+    Returns
+    -------
+    Path
+        Path to the 'data/' directory.
+    """
     return get_project_root() / "data"
 
 
@@ -65,30 +84,43 @@ class _ColourFormatter(logging.Formatter):
 
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """
-    Return a named logger with coloured console + rotating file handlers.
+    Initialise a named logger with industrial-grade formatting.
 
-    Handlers are only added once even if *get_logger* is called multiple times
-    for the same *name*.
+    Configurations:
+      - Console: Coloured ANSI output for immediate feedback.
+      - File: Persistent log in 'output/traffic_system.log'.
+
+    Parameters
+    ----------
+    name : str
+        The name of the module or component.
+    level : int
+        Logging level (e.g., logging.INFO).
+
+    Returns
+    -------
+    logging.Logger
+        Configured logger instance.
     """
     logger = logging.getLogger(name)
     if logger.handlers:
-        return logger  # already configured
+        return logger
 
     logger.setLevel(level)
 
-    # Console handler (coloured)
+    # Console handler (Coloured ANSI)
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(level)
     ch.setFormatter(
         _ColourFormatter(
-            fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            fmt="%(asctime)s [%(levelname)s] %(message)s",
             datefmt="%H:%M:%S",
         )
     )
     logger.addHandler(ch)
 
-    # File handler (plain text, in output/)
-    log_path = get_output_dir() / "traffic_system.log"
+    # File handler (Persistent log)
+    log_path = get_output_dir() / "traffic_intelligence.log"
     fh = logging.FileHandler(log_path, encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(
@@ -102,40 +134,67 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     return logger
 
 
-# ---------------------------------------------------------------------------
-# YAML config loader
-# ---------------------------------------------------------------------------
+# ── Configuration ──────────────────────────────────────────────────
 
-_REQUIRED_KEYS: set[str] = {
+_REQUIRED_SECTIONS: set[str] = {
     "model",
     "detection",
-    "density_thresholds",
-    "signal",
-    "prediction",
+    "tracking",
+    "analytics",
 }
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
     """
-    Load and return the project YAML configuration.
+    Load the project configuration from a YAML file.
 
-    Falls back to config/settings.yaml relative to the project root
-    when *path* is not provided.  Raises ValueError for missing top-level keys.
+    Prioritises 'config.yaml' at the root if no path is provided. Fallback 
+    to 'config/settings.yaml' (legacy) if root config is missing.
+
+    Parameters
+    ----------
+    path : Path | None
+        Override path to the config file.
+
+    Returns
+    -------
+    dict[str, Any]
+        A structured dictionary of configuration parameters.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no configuration file is found in any standard location.
+    ValueError
+        If required top-level sections are missing.
     """
+    root = get_project_root()
+    
+    # Selection logic: Override -> Root 'config.yaml' -> Legacy 'config/settings.yaml'
     if path is None:
-        path = get_project_root() / "config" / "settings.yaml"
+        root_path = root / "config.yaml"
+        legacy_path = root / "config" / "settings.yaml"
+        path = root_path if root_path.is_file() else legacy_path
 
     if not path.is_file():
-        raise FileNotFoundError(f"Config file not found: '{path}'.")
+        raise FileNotFoundError(f"No configuration file found at: '{path}'.")
 
-    with open(path, encoding="utf-8") as fh:
-        cfg: dict[str, Any] = yaml.safe_load(fh) or {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            cfg: dict[str, Any] = yaml.safe_load(fh) or {}
+    except Exception as exc:
+        raise ValueError(f"Failed to parse config at '{path}': {exc}") from exc
 
-    missing = _REQUIRED_KEYS - cfg.keys()
+    # Validate essential sections
+    missing = _REQUIRED_SECTIONS - cfg.keys()
     if missing:
-        raise ValueError(
-            f"Config file '{path}' is missing required sections: {sorted(missing)}"
-        )
+        # For legacy compatibility, we only warn if it's the legacy file
+        if "config.yaml" in str(path):
+            raise ValueError(
+                f"Config file '{path}' is missing required sections: {sorted(missing)}"
+            )
+        else:
+            logging.getLogger(__name__).warning("Legacy config missing new sections: %s", missing)
 
     return cfg
 
@@ -146,13 +205,15 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
 class FPSMeter:
     """
-    Lightweight frames-per-second counter using a sliding window.
+    Sliding-window frames-per-second (FPS) monitor.
 
-    Usage
-    -----
-    fps = FPSMeter(window=30)
-    fps.tick()          # call after each frame is processed
-    print(fps.get())    # current FPS estimate
+    Provides a thread-safe implementation for tracking real-time processing
+    throughput using a configurable temporal window.
+
+    Parameters
+    ----------
+    window : int
+        Number of previous frames to consider for the FPS estimate.
     """
 
     def __init__(self, window: int = 30) -> None:
@@ -160,10 +221,19 @@ class FPSMeter:
         self._lock = threading.Lock()
 
     def tick(self) -> None:
+        """Record the completion of a single frame processing step."""
         with self._lock:
             self._timestamps.append(time.perf_counter())
 
     def get(self) -> float:
+        """
+        Calculate the current heart-beat FPS estimate.
+
+        Returns
+        -------
+        float
+            Estimated frames per second (0.0 if insufficient data).
+        """
         with self._lock:
             ts = list(self._timestamps)
         if len(ts) < 2:
@@ -177,12 +247,15 @@ class FPSMeter:
 
 class RollingBuffer:
     """
-    Thread-safe fixed-length ring buffer for rolling aggregates.
+    Thread-safe ring buffer for statistical analysis of time-series data.
+
+    Maintains a fixed-size window of recent values and provides fast
+    aggregation methods.
 
     Parameters
     ----------
     maxlen : int
-        Maximum number of samples retained.
+        Maximum number of samples to retain in the buffer.
     """
 
     def __init__(self, maxlen: int = 300) -> None:
@@ -190,19 +263,51 @@ class RollingBuffer:
         self._lock = threading.Lock()
 
     def push(self, value: float) -> None:
+        """
+        Append a new value to the buffer, evicting the oldest if full.
+
+        Parameters
+        ----------
+        value : float
+            The numeric value to add.
+        """
         with self._lock:
             self._buf.append(value)
 
     def mean(self) -> float:
+        """
+        Calculate the arithmetic mean of all samples in the buffer.
+
+        Returns
+        -------
+        float
+            The mean value (0.0 if empty).
+        """
         with self._lock:
             data = list(self._buf)
         return float(sum(data) / len(data)) if data else 0.0
 
     def max(self) -> float:
+        """
+        Identify the maximum value in the current window.
+
+        Returns
+        -------
+        float
+            The maximum value (0.0 if empty).
+        """
         with self._lock:
             return max(self._buf) if self._buf else 0.0
 
     def to_list(self) -> list[float]:
+        """
+        Return a copy of the buffer contents as a standard list.
+
+        Returns
+        -------
+        list[float]
+            List of buffer values.
+        """
         with self._lock:
             return list(self._buf)
 

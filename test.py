@@ -441,8 +441,8 @@ class TestConfigLoading:
         assert isinstance(cfg, dict)
         assert "model" in cfg
         assert "detection" in cfg
-        assert "density_thresholds" in cfg
-        assert "signal" in cfg
+        assert "analytics" in cfg
+        assert "tracking" in cfg
         assert "prediction" in cfg
 
     def test_load_config_model_name(self):
