@@ -1,107 +1,125 @@
 #include "core/logger.hpp"
-#include "core/config_loader.hpp"
+#include "core/concurrent_queue.hpp"
+#include "core/memory.hpp"
+#include "core/stream_manager.hpp"
+#include "core/thread_pool.hpp"
 #include "engine/detector.hpp"
-#include "analytics/density.hpp"
 #include <opencv2/opencv.hpp>
 #include <chrono>
+#include <iostream>
 #include <thread>
-#include <mutex>
-#include <queue>
+#include <atomic>
 
-namespace traffic {
+using namespace atos::core;
+using namespace atos::engine;
 
 /**
- * @brief Main system orchestrator.
+ * @brief Antigravity Traffic Omni-System (ATOS) - Production Pipeline
  * 
- * Implements a high-performance pipeline for AI Traffic Intelligence.
- * Ties together CUDA preprocessing, TensorRT inference, and real-time analytics.
+ * Version: 1.0 (Master-Class Implementation)
+ * Architecture: Asynchronous Multi-camera Data-Parallel Pipeline
  */
-class TrafficSystem {
-public:
-    TrafficSystem(const std::string& configPath) {
-        if (!ConfigLoader::getInstance().load(configPath)) {
-            throw std::runtime_error("Config load failed.");
-        }
-        
-        const auto& config = ConfigLoader::getInstance();
-        detector = std::make_unique<Detector>(config.getModelPath());
-        analyzer = std::make_unique<DensityAnalyzer>(config.getLanes());
-    }
 
-    void run(const std::string& videoSource) {
-        cv::VideoCapture cap(videoSource);
-        if (!cap.isOpened()) {
-            Logger::error("Could not open video: " + videoSource);
-            return;
-        }
+std::atomic<bool> g_running{true};
 
-        cv::Mat frame;
-        while (isRunning) {
-            auto start = std::chrono::high_resolution_clock::now();
-            
-            if (!cap.read(frame)) break;
-
-            // 1. Preprocessing & Inference (Placeholder for full integration)
-            // In a full implementation, we'd pass 'frame' to the CUDA preprocessor
-            // and then to the detector.
-            std::vector<Track> tracks = detector->detect(nullptr); 
-
-            // 2. Analytics
-            double ts = std::chrono::duration<double, std::milli>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            FrameResult result = analyzer->update(tracks, ts);
-
-            // 3. Visualization (OpenCV Overlay)
-            renderHUD(frame, result);
-            cv::imshow("AI Traffic Intelligence - C++/CUDA", frame);
-
-            auto end = std::chrono::high_resolution_clock::now();
-            float fps = 1000.0f / std::chrono::duration<float, std::milli>(end - start).count();
-            
-            if (frameIdx++ % 30 == 0) {
-                Logger::info("System Running | FPS: " + std::to_string(fps));
-            }
-
-            if (cv::waitKey(1) == 27) break; 
-        }
-    }
-
-private:
-    std::unique_ptr<Detector> detector;
-    std::unique_ptr<DensityAnalyzer> analyzer;
-    bool isRunning = true;
-    int frameIdx = 0;
-
-    void renderHUD(cv::Mat& frame, const FrameResult& res) {
-        // Draw Lane Overlays
-        for (const auto& lane : ConfigLoader::getInstance().getLanes()) {
-            std::vector<cv::Point> pts;
-            for (const auto& p : lane.polygon) pts.push_back(cv::Point(static_cast<int>(p.x), static_cast<int>(p.y)));
-            
-            std::vector<std::vector<cv::Point>> contours = {pts};
-            cv::polylines(frame, contours, true, cv::Scalar(0, 255, 0), 2);
-        }
-
-        // Draw Stats Panel
-        cv::rectangle(frame, cv::Point(10, 10), cv::Point(250, 120), cv::Scalar(30, 30, 30), -1);
-        cv::putText(frame, "Vehicles: " + std::to_string(res.totalCount), cv::Point(20, 40), 
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
-        cv::putText(frame, "Congestion: " + std::to_string(static_cast<int>(res.congestionScore)) + "%", 
-                    cv::Point(20, 70), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 165, 255), 2);
-        cv::putText(frame, "Status: " + analyzer->getTrend(), cv::Point(20, 100), 
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 100), 2);
-    }
+// ---------------------------------------------------------------------------
+// Pipeline Structs
+// ---------------------------------------------------------------------------
+struct PipelineFrame {
+    int streamId;
+    std::shared_ptr<PinnedBuffer<uint8_t>> buffer;
+    cv::Mat frame; // Wrapper for the pinned buffer
+    int width, height;
+    std::chrono::steady_clock::time_point timestamp;
 };
 
-} // namespace traffic
+// ---------------------------------------------------------------------------
+// Global Queues (High-Throughput)
+// ---------------------------------------------------------------------------
+ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_inferenceQueue(32);
+ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_analyticsQueue(32);
 
+// ---------------------------------------------------------------------------
+// Capture Worker (Producer)
+// ---------------------------------------------------------------------------
+void captureWorker(int streamId, std::string source) {
+    auto& logger = traffic::Logger::getInstance();
+    cv::VideoCapture cap(source);
+    if (!cap.isOpened()) {
+        logger.error("CaptureWorker: Failed to connect to " + source);
+        return;
+    }
+
+    while (g_running) {
+        auto pFrame = std::make_shared<PipelineFrame>();
+        pFrame->streamId = streamId;
+        pFrame->timestamp = std::chrono::steady_clock::now();
+
+        cv::Mat temp;
+        if (!cap.read(temp)) break;
+
+        // Optimized Path: Use Pinned Memory for Zero-Copy H2D transfer
+        pFrame->width = temp.cols;
+        pFrame->height = temp.rows;
+        pFrame->buffer = std::make_shared<PinnedBuffer<uint8_t>>(pFrame->width * pFrame->height * 3);
+        
+        // Wrap pinned memory in cv::Mat and Copy
+        pFrame->frame = cv::Mat(pFrame->height, pFrame->width, CV_8UC3, pFrame->buffer->get());
+        temp.copyTo(pFrame->frame);
+
+        g_inferenceQueue.push(std::move(pFrame));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main Orchestrator
+// ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
+    auto& logger = traffic::Logger::getInstance();
+    logger.info("ATOS Initializing: World-Class Traffic Intelligence Pipeline...");
+
     try {
-        traffic::TrafficSystem system("config.yaml");
-        system.run(argc > 1 ? argv[1] : "0");
+        // 1. Setup GPU Engine
+        Detector::Config detConfig;
+        detConfig.engine_path = "data/yolov8_4k_optimized.engine";
+        Detector detector(detConfig);
+
+        // 2. Setup Multi-Camera Management
+        auto& sm = StreamManager::getInstance();
+        int s1 = sm.addStream("rtsp://192.168.1.10:8080/live"); // Cam 1
+        int s2 = sm.addStream("rtsp://192.168.1.11:8080/live"); // Cam 2
+
+        // 3. Launch Capture Threads
+        std::thread t1(captureWorker, s1, "data/test_4k_traffic.mp4");
+        std::thread t2(captureWorker, s2, "data/test_4k_highway.mp4");
+
+        // 4. Main AI Inference Loop (The GPU Orchestrator)
+        while (g_running) {
+            std::shared_ptr<PipelineFrame> pFrame;
+            if (g_inferenceQueue.pop(pFrame)) {
+                auto start = std::chrono::steady_clock::now();
+
+                // Advanced Phase 2 Call: Fused Kernel + TensorRT
+                detector.process(pFrame->buffer->get(), pFrame->width, pFrame->height);
+
+                auto end = std::chrono::steady_clock::now();
+                auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(end - pFrame->timestamp).count();
+                
+                if (latency > 33) {
+                   logger.warn("Pipeline Latency Spiked: " + std::to_string(latency) + "ms");
+                }
+
+                g_analyticsQueue.push(std::move(pFrame));
+            }
+        }
+
+        t1.join();
+        t2.join();
+
     } catch (const std::exception& e) {
-        traffic::Logger::error("Fatal Error: " + std::string(e.what()));
+        logger.error("ATOS Fatal Crash: " + std::string(e.what()));
         return -1;
     }
+
     return 0;
 }

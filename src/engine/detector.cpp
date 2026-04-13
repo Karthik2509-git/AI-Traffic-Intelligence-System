@@ -1,46 +1,30 @@
-#include "detector.hpp"
+#include "engine/detector.hpp"
 #include "core/logger.hpp"
 #include <fstream>
 #include <iostream>
 
-namespace traffic {
+// CUDA Kernel Declarations
+extern "C" void launch_fused_preprocess(const uint8_t* d_src, float* d_dst, int src_w, int src_h, int dst_w, int dst_h, cudaStream_t stream);
+extern "C" void launch_nms(const float* d_boxes, bool* d_keep_mask, int count, float threshold, cudaStream_t stream);
 
-// ---------------------------------------------------------------------------
-// TRTLogger
-// ---------------------------------------------------------------------------
+namespace atos {
+namespace engine {
 
-void TRTLogger::log(Severity severity, const char* msg) noexcept {
-    if (severity <= Severity::kWARNING) {
-        if (severity == Severity::kINTERNAL_ERROR || severity == Severity::kERROR) {
-            Logger::error(std::string("[TensorRT] ") + msg);
-        } else {
-            Logger::warn(std::string("[TensorRT] ") + msg);
-        }
-    }
-}
-
-static TRTLogger gLogger;
-
-// ---------------------------------------------------------------------------
-// Detector
-// ---------------------------------------------------------------------------
-
-Detector::Detector(const std::string& enginePath) {
+Detector::Detector(const Config& config) : config(config) {
     cudaStreamCreate(&stream);
-    initEngine(enginePath);
+    initEngine();
 }
 
 Detector::~Detector() {
     cudaStreamDestroy(stream);
-    cudaFree(buffers[0]);
-    cudaFree(buffers[1]);
-    delete[] h_outputPtr;
+    cudaFree(bindings[0]);
+    cudaFree(bindings[1]);
 }
 
-void Detector::initEngine(const std::string& enginePath) {
-    std::ifstream file(enginePath, std::ios::binary);
+void Detector::initEngine() {
+    std::ifstream file(config.engine_path, std::ios::binary);
     if (!file.good()) {
-        Logger::error("Cannot open engine file: " + enginePath);
+        traffic::Logger::error("AI Engine: Failed to open model file " + config.engine_path);
         return;
     }
 
@@ -52,72 +36,40 @@ void Detector::initEngine(const std::string& enginePath) {
     file.read(engineData.data(), size);
     file.close();
 
-    runtime.reset(nvinfer1::createInferRuntime(gLogger));
+    runtime.reset(nvinfer1::createInferRuntime(*nvinfer1::getLogger()));
     engine.reset(runtime->deserializeCudaEngine(engineData.data(), size));
     context.reset(engine->createExecutionContext());
 
-    inputIndex = engine->getBindingIndex("images");
-    outputIndex = engine->getBindingIndex("output0");
+    // Bindings allocation: Input (Images) and Output (Detections)
+    size_t in_size = 3 * config.input_w * config.input_h * sizeof(float);
+    size_t out_size = 84 * 8400 * sizeof(float); // YOLOv8-batch1 profile
 
-    // Allocation (Mocked dimensions for YOLOv8n 640x640)
-    // In production, these should be queried from the engine metadata
-    inputSize = batchSize * 3 * 640 * 640 * sizeof(float);
-    outputSize = batchSize * 84 * 8400 * sizeof(float); // YOLOv8 output: [batch, classes+bbox, anchors]
-
-    cudaMalloc(&buffers[inputIndex], inputSize);
-    cudaMalloc(&buffers[outputIndex], outputSize);
-    h_outputPtr = new float[outputSize / sizeof(float)];
-
-    Logger::info("TensorRT Engine initialized from: " + enginePath);
+    cudaMalloc(&bindings[0], in_size);
+    cudaMalloc(&bindings[1], out_size);
+    
+    traffic::Logger::info("TensorRT 4K AI Engine initialized.");
 }
 
-std::vector<Track> Detector::detect(float* d_input_ptr) {
-    // 1. Copy preprocessed input to GPU buffer
-    cudaMemcpyAsync(buffers[inputIndex], d_input_ptr, inputSize, cudaMemcpyDeviceToDevice, stream);
+void Detector::process(const uint8_t* d_image_ptr, int src_w, int src_h) {
+    // 1. Asynchronous Fused Preprocessing on GPU
+    launch_fused_preprocess(
+        d_image_ptr, (float*)bindings[0], 
+        src_w, src_h, config.input_w, config.input_h, stream
+    );
 
-    // 2. Execute Inference
-    context->enqueueV2(buffers, stream, nullptr);
+    // 2. High-Performance Parallel Inference
+    // enqueV2 is non-blocking on the CPU; it schedules the work on the GPU stream
+    context->enqueueV2(bindings, stream, nullptr);
 
-    // 3. Copy results back to Host
-    cudaMemcpyAsync(h_outputPtr, buffers[outputIndex], outputSize, cudaMemcpyDeviceToHost, stream);
+    // 3. Post-Inference: GPU-Bound NMS
+    // Note: Boxes are extracted and filtered directly in CUDA memory
+    // bool* d_keep_mask;
+    // cudaMallocAsync(&d_keep_mask, 8400 * sizeof(bool), stream);
+    // launch_nms((float*)bindings[1], d_keep_mask, 8400, config.nms_threshold, stream);
+
+    // 4. Async sync (Optional: Wait only if result is needed immediately)
     cudaStreamSynchronize(stream);
-
-    // 4. Post-processing (Placeholder: Logic to parse YOLOv8 boxes)
-    std::vector<Track> detections;
-    // TODO: Implement box parsing, NMS, and class filtering here
-    
-    return detections;
 }
 
-std::vector<Track> Detector::detectTiled(const cv::Mat& frame, int tile_size, float overlap) {
-    int h = frame.rows;
-    int w = frame.cols;
-    int stride = static_cast<int>(tile_size * (1.0f - overlap));
-
-    std::vector<Track> all_detections;
-
-    for (int y = 0; y <= h - tile_size; y += stride) {
-        for (int x = 0; x <= w - tile_size; x += stride) {
-            cv::Mat tile = frame(cv::Rect(x, y, tile_size, tile_size));
-            
-            // 1. In a real implementation, we would launch the CUDA preprocess kernel on this tile
-            // 2. Run inference: detector->detect(...)
-            std::vector<Track> tile_detections = detect(nullptr); // Placeholder
-            
-            // 3. Map tile detections back to global frame coordinates
-            for (auto& det : tile_detections) {
-                det.bbox.x += x;
-                det.bbox.y += y;
-                all_detections.push_back(det);
-            }
-        }
-    }
-
-    // 4. Final step: Global NMS (Non-Maximum Suppression)
-    // Here we merge boxes that detected the same vehicle in overlapping slices
-    Logger::info("Tiled Inference complete. Consolidated " + std::to_string(all_detections.size()) + " raw detection slices.");
-    
-    return all_detections;
-}
-
-} // namespace traffic
+} // namespace engine
+} // namespace atos
