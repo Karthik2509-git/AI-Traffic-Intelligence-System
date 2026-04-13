@@ -37,7 +37,7 @@ import numpy as np
 from src.density_analyzer import DensityAnalyzer, FrameDensity, Lane, draw_lanes, make_full_frame_lane
 from src.detection import (
     VEHICLE_CLASSES, CLASS_COLOURS, classify_density, load_model, 
-    _resolve_names, _draw_custom_boxes, run_tracking, to_tracks
+    _resolve_names, _draw_custom_boxes, run_tracking, run_tiled_detection, to_tracks
 )
 from src.predictor import CongestionPredictor, build_feature_vector, frames_to_dataframe
 from src.signal_optimizer import LaneSignalInput, PhaseSchedule, SignalOptimizer
@@ -68,6 +68,9 @@ class PipelineConfig:
     min_motorcycle_conf: float = 0.25       # capture far-away bikes
     industrial_conf_floor: float = 0.35     # certainty floor
     min_deep_field_area: int   = 800        # px^2 below which is 'Distant'
+    crowded_scene_opt:   bool  = False      # use tiled inference (SAHI-Lite)
+    tile_overlap:        float = 0.25
+    tile_size:           int   = 640
 
     # ── Tracking ───────────────────────────────────────────────────────
     tracker_max_age:     int   = 5
@@ -187,8 +190,16 @@ class TrafficPipeline:
             logger.info("No lanes specified; using full-frame single lane.")
 
         # ── Tracker ─────────────────────────────────────────────────────
-        # Now using native ByteTrack via detection.run_tracking()
-        self._tracker = None
+        # If Crowded Opt is active, we use internal SORT since ByteTrack 
+        # doesn't natively merge detections from multiple tiles yet.
+        if cfg.crowded_scene_opt:
+            self._tracker = SORTTracker(
+                max_age=cfg.tracker_max_age,
+                min_hits=cfg.tracker_min_hits,
+                iou_threshold=cfg.tracker_iou,
+            )
+        else:
+            self._tracker = None
 
 
         # ── Density analyser ────────────────────────────────────────────
@@ -266,24 +277,35 @@ class TrafficPipeline:
             h, w = frame.shape[:2]
             self._setup(w, h)
 
-        # ── 1. Object detection & tracking (Native ByteTrack) ───────────
-        results = run_tracking(
-            model                = self._model,
-            frame                = frame,
-            confidence_threshold = cfg.confidence_threshold,
-            iou_threshold        = cfg.iou_threshold,
-            inference_size       = cfg.inference_size,
-            min_motorcycle_conf  = cfg.min_motorcycle_conf,
-        )
-        
-        # ── 2. Bridge to internal Track objects ──────────────────────────
-        names_map = self._model.names
-        tracks    = to_tracks(
-            results              = results, 
-            names_map            = names_map,
-            confidence_threshold = cfg.confidence_threshold,
-            min_motorcycle_conf  = cfg.min_motorcycle_conf,
-        )
+        # ── 1. Object detection & tracking ──────────────────────────────
+        if cfg.crowded_scene_opt:
+            # Tiled Inference (Zoom into dense traffic)
+            detections = run_tiled_detection(
+                model                = self._model,
+                frame                = frame,
+                confidence_threshold = min(cfg.confidence_threshold, cfg.min_motorcycle_conf),
+                iou_threshold        = 0.65, # Higher IoU for dense scenes
+                tile_size            = cfg.tile_size,
+            )
+            # Use internal SORT since we have raw detections
+            tracks = self._tracker.update(detections)
+        else:
+            # Standard Single-Pass ByteTrack
+            results = run_tracking(
+                model                = self._model,
+                frame                = frame,
+                confidence_threshold = cfg.confidence_threshold,
+                iou_threshold        = cfg.iou_threshold,
+                inference_size       = cfg.inference_size,
+                min_motorcycle_conf  = cfg.min_motorcycle_conf,
+            )
+            names_map = self._model.names
+            tracks    = to_tracks(
+                results              = results, 
+                names_map            = names_map,
+                confidence_threshold = cfg.confidence_threshold,
+                min_motorcycle_conf  = cfg.min_motorcycle_conf,
+            )
         
         # ── 2b. Temporal Label Consensus (Weighted Smoothing) ─────────────
         for track in tracks:

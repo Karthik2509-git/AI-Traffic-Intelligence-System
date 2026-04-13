@@ -166,6 +166,131 @@ def run_tracking(
 
 
 
+# ---------------------------------------------------------------------------
+# Slicing Aided Hyper Inference (SAHI-Lite)
+# ---------------------------------------------------------------------------
+
+def _get_tiles(frame: np.ndarray, tile_size: int = 640, overlap: float = 0.25) -> list[dict]:
+    """Slice a large frame into overlapping tiles for high-res detection."""
+    h, w = frame.shape[:2]
+    stride = int(tile_size * (1 - overlap))
+    
+    tiles = []
+    for y in range(0, h - tile_size + 1, stride):
+        for x in range(0, w - tile_size + 1, stride):
+            tile = frame[y:y+tile_size, x:x+tile_size]
+            tiles.append({"image": tile, "x_off": x, "y_off": y})
+            
+    # Add bottom-right tile if dimensions not divisible by stride
+    if (h - tile_size) % stride != 0 or (w - tile_size) % stride != 0:
+        y_end = h - tile_size
+        x_end = w - tile_size
+        tiles.append({"image": frame[y_end:h, x_end:w], "x_off": x_end, "y_off": y_end})
+        
+    return tiles
+
+
+def _apply_global_nms(detections: list[dict], iou_threshold: float = 0.65) -> list[dict]:
+    """Merge overlapping detections from multiple tiles using Greedy NMS."""
+    if not detections:
+        return []
+        
+    # Sort by confidence descending
+    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+    keep = []
+    
+    while detections:
+        best = detections.pop(0)
+        keep.append(best)
+        
+        # Filter out overlapping boxes of the SAME class
+        remaining = []
+        for d in detections:
+            if d["class_name"] != best["class_name"]:
+                remaining.append(d)
+                continue
+                
+            iou = _calculate_iou(best["bbox"], d["bbox"])
+            if iou < iou_threshold:
+                remaining.append(d)
+        detections = remaining
+        
+    return keep
+
+
+def _calculate_iou(box1: list[float], box2: list[float]) -> float:
+    """Calculate Intersection-over-Union (IoU) of two bbox coordinates."""
+    x1, y1, x2, y2 = box1
+    xx1, yy1, xx2, yy2 = box2
+    
+    ix1 = max(x1, xx1)
+    iy1 = max(y1, yy1)
+    ix2 = min(x2, xx2)
+    iy2 = min(y2, yy2)
+    
+    w = max(0, ix2 - ix1)
+    h = max(0, iy2 - iy1)
+    inter = w * h
+    
+    area1 = (x2 - x1) * (y2 - y1)
+    area2 = (xx2 - xx1) * (yy2 - yy1)
+    union = area1 + area2 - inter + 1e-6
+    
+    return inter / union
+
+
+def run_tiled_detection(
+    model: YOLO,
+    frame: np.ndarray,
+    confidence_threshold: float = 0.20,
+    iou_threshold: float = 0.65,
+    tile_size: int = 640,
+) -> list[dict]:
+    """
+    Run SAHI-Lite detection on tiles and merge results.
+    Captures small objects that standard full-frame inference misses.
+    """
+    tiles = _get_tiles(frame, tile_size=tile_size)
+    all_detections = []
+    
+    for tile in tiles:
+        results = model.predict(
+            tile["image"], 
+            conf=confidence_threshold, 
+            iou=iou_threshold, 
+            verbose=False
+        )
+        prediction = results[0]
+        names_map = _resolve_names(prediction, model)
+        
+        if prediction.boxes is not None:
+            xyxy = prediction.boxes.xyxy.cpu().numpy()
+            conf = prediction.boxes.conf.cpu().numpy()
+            clss = prediction.boxes.cls.cpu().numpy().astype(int)
+            
+            for i in range(len(clss)):
+                c_name = names_map.get(clss[i])
+                if c_name not in VEHICLE_CLASSES:
+                    continue
+                
+                # Shift coordinates back to original frame
+                box = [
+                    xyxy[i][0] + tile["x_off"],
+                    xyxy[i][1] + tile["y_off"],
+                    xyxy[i][2] + tile["x_off"],
+                    xyxy[i][3] + tile["y_off"]
+                ]
+                
+                all_detections.append({
+                    "bbox": box,
+                    "confidence": float(conf[i]),
+                    "class_name": c_name
+                })
+                
+    # Global merge
+    return _apply_global_nms(all_detections, iou_threshold=iou_threshold)
+
+
 def to_tracks(
     results: Any, 
     names_map: dict[int, str],

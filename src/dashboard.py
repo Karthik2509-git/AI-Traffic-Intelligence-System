@@ -271,6 +271,11 @@ with st.sidebar.expander("🛡️ Accuracy Refinement", expanded=False):
         value=False,
         help="If enabled, tiny or uncertain vehicles (gray boxes) are hidden."
     )
+    crowded_opt = st.toggle(
+        "🏘️ Crowded Scene Opt",
+        value=bool(_cfg_detection.get("crowded_scene_opt", False)),
+        help="Uses Tiled Inference (SAHI-Lite) to detect small cars in dense traffic. (Slower FPS)"
+    )
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚖️ System Calibration")
@@ -494,6 +499,9 @@ def _process_video(video_path: Path, img_placeholder: Any = None, max_frames: in
         industrial_conf_floor = float(_cfg_detection.get("industrial_conf_floor", 0.35)),
         min_deep_field_area  = int(_cfg_detection.get("min_deep_field_area", 800)),
         hide_distant_objects = hide_distant,
+        crowded_scene_opt    = crowded_opt,
+        tile_overlap         = float(_cfg_detection.get("tile_overlap", 0.25)),
+        tile_size            = int(_cfg_detection.get("tile_size", 640)),
     )
     
     pipeline = TrafficPipeline(source=str(video_path), config=cfg)

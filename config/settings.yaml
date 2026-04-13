@@ -22,6 +22,9 @@ detection:
   industrial_conf_floor: 0.35  # Threshold below which an object is 'Uncertain'
   min_deep_field_area: 800     # BBox area (px^2) below which an object is 'Distant'
   iou_threshold: 0.45          # NMS IoU overlap threshold
+  crowded_scene_opt: false     # Enable SAHI-Lite (tiled inference) for dense traffic
+  tile_overlap: 0.25           # Overlap between tiles (0–1)
+  tile_size: 640               # Resolution of each tile
   frame_skip: 1                # Process every N-th frame (1 = all frames)
   vehicle_classes:
     - car
