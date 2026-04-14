@@ -1,74 +1,82 @@
 cmake_minimum_required(VERSION 3.18)
-project(AITrafficIntelligenceSystem VERSION 1.0.0 LANGUAGES CXX CUDA)
+project(ATOS_Traffic_Intelligence LANGUAGES CXX CUDA)
 
+# ---------------------------------------------------------------------------
+# Build Settings
+# ---------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Release)
+
+# Optimized for RTX 50-series (Blackwell Architecture)
+# Note: Adjust compute capability if necessary (e.g., 9.0 for H100/Blackwell)
+set(CMAKE_CUDA_ARCHITECTURES 89 90) 
 
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
 
-# CUDA
-find_package(CUDA REQUIRED)
-include_directories(${CUDA_INCLUDE_DIRS})
-
-# OpenCV (Check for CUDA support if possible)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui cudaarithm cudaimgproc)
+# OpenCV
+find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-# YAML-CPP for configuration parsing
-# (Assuming installed via package manager or vcpkg)
-find_package(yaml-cpp REQUIRED)
+# CUDA
+include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
-# TensorRT (For detection engine)
-# Note: TensorRT usually needs manual path specification if not in system paths
-# find_path(TENSORRT_INCLUDE_DIR NvInfer.h)
-# find_library(TENSORRT_LIBRARY nvinfer)
+# TensorRT (Manually specified for standard Windows installs)
+set(TENSORRT_ROOT "C:/Program Files/NVIDIA GPU Computing Toolkit/TensorRT") # Placeholder path
+include_directories("${TENSORRT_ROOT}/include")
+link_directories("${TENSORRT_ROOT}/lib")
 
-# ---------------------------------------------------------------------------
-# Directories & Sources
-# ---------------------------------------------------------------------------
-
-include_directories(src)
-
-# Core Files
-set(CORE_SOURCES
-    src/core/logger.cpp
-    src/core/config_loader.cpp
-)
-
-# Analytics Files
-set(ANALYTICS_SOURCES
-    src/analytics/density.cpp
-)
-
-# CUDA Sources
-set(CUDA_SOURCES
-    src/cuda/preprocess.cu
-    src/cuda/heatmap.cu
-)
+# yaml-cpp
+find_package(yaml-cpp QUIET)
 
 # ---------------------------------------------------------------------------
-# Executables
+# Project Structure & Inclues
 # ---------------------------------------------------------------------------
+include_directories(include)
 
-add_executable(traffic_system 
-    src/main.cpp 
-    ${CORE_SOURCES} 
-    ${ANALYTICS_SOURCES}
-    ${CUDA_SOURCES}
+# ---------------------------------------------------------------------------
+# Source Files
+# ---------------------------------------------------------------------------
+file(GLOB_RECURSE SOURCES 
+    "src/core/*.cpp"
+    "src/engine/*.cpp"
+    "src/analytics/*.cpp"
+    "src/control/*.cpp"
+    "src/network/*.cpp"
+    "src/simulation/*.cpp"
+    "src/main.cpp"
 )
 
-target_link_libraries(traffic_system 
-    PRIVATE 
-    ${OpenCV_LIBS} 
-    ${CUDA_LIBRARIES} 
+file(GLOB_RECURSE CUDA_SOURCES 
+    "src/cuda/*.cu"
+)
+
+# ---------------------------------------------------------------------------
+# Build Executable
+# ---------------------------------------------------------------------------
+add_executable(atos_traffic_system ${SOURCES} ${CUDA_SOURCES})
+
+# ---------------------------------------------------------------------------
+# Linking
+# ---------------------------------------------------------------------------
+target_link_libraries(atos_traffic_system
+    PRIVATE
+    ${OpenCV_LIBS}
+    nvinfer
+    nvparsers
+    nvonnxparser
     yaml-cpp
-    # nvinfer
 )
 
 # ---------------------------------------------------------------------------
-# CUDA Configuration
+# Optimizations for RTX 5050
 # ---------------------------------------------------------------------------
-set_target_properties(traffic_system PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-set_target_properties(traffic_system PROPERTIES CUDA_ARCHITECTURES "75;80;86;89") # Target common modern GPUs
+if(MSVC)
+    target_compile_options(atos_traffic_system PRIVATE /O2 /Oi /Ot)
+else()
+    target_compile_options(atos_traffic_system PRIVATE -O3 -ffast-math)
+endif()
+
+message(STATUS "ATOS: System configured for RTX 5050 / CUDA 12.4")
