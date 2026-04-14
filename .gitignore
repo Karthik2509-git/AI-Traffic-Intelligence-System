@@ -1,23 +1,28 @@
+# Industrial Consolidation Policy
+bin/
+legacy/
+*.obj
+*.exe
+build_log.txt
+
+# Environment & Cache
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 output/
 *.log
 .env
 
-# Model weights (large binaries)
+# Model weights (large binaries - manage via LFS or external data store)
 *.pt
 *.onnx
 *.engine
-
-# Joblib serialised models
 *.joblib
 
-# IDE
+# IDE & OS
 .vscode/
 .idea/
 *.swp
-
-# OS
 .DS_Store
 Thumbs.db

@@ -13,7 +13,7 @@ echo [ATOS] Launching 4K Traffic Intelligence Engine...
 echo [ATOS] Target: NVIDIA RTX 5050 (Optimized)
 echo [ATOS] Sources: Multi-Camera RTSP Simulation
 
-atos_traffic_system.exe
+bin\atos_traffic_system.exe
 
 if %errorlevel% neq 0 (
     echo [ERROR] ATOS Engine crashed or failed to launch with code %errorlevel%

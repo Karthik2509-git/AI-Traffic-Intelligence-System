@@ -74,11 +74,16 @@ void digitalTwinSyncWorker() {
 int main(int argc, char** argv) {
     ::traffic::Logger::info("ATOS 2.0: Initializing Autonomous Intelligence Node...");
 
+    std::string videoSource = "data/test_4k_traffic.mp4"; // Default
+    if (argc > 1) {
+        videoSource = argv[1];
+        ::traffic::Logger::info("Live Mode: Targeting Mobile Stream -> " + videoSource);
+    }
+
     try {
         // 1. Setup City Strategy & 3. Initialize Global Intelligence Modules
         auto graph = std::make_shared<::antigravity::network::RoadGraph>();
         graph->addCameraNode(0, "Main Intersection 4K-Alpha");
-        graph->addRoadConnection(0, 1, 500.0f); // Link to virtual node 1
         graph->addRoadConnection(0, 1, 500.0f); // Seed 500m exit segment for density tracking
 
         auto signals = std::make_shared<::antigravity::control::RLSignalController>("data/ppo_policy_4k.onnx");
@@ -95,7 +100,7 @@ int main(int argc, char** argv) {
         ::antigravity::engine::Detector detector(detConfig);
 
         // 4. Launch Support Threads
-        std::thread t1(captureWorker, 0, "data/test_4k_traffic.mp4");
+        std::thread t1(captureWorker, 0, videoSource);
         std::thread syncThread(digitalTwinSyncWorker);
 
         ::traffic::Logger::info("ATOS 2.0 Operational. High-Performance Autonomous Intelligence Active.");

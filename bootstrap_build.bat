@@ -51,10 +51,12 @@ nvcc -c src\cuda\kernel_fusion.cu -o kernel_fusion.obj %NVCC_INCLUDES% -allow-un
 :: Final Linkage Pass
 :: ---------------------------------------------------------------------------
 echo [ATOS] Performing Final High-Performance Linkage...
-link.exe /OUT:atos_traffic_system.exe *.obj %LIBS% %LIB_FILES% /SUBSYSTEM:CONSOLE
+link.exe /OUT:bin\atos_traffic_system.exe *.obj %LIBS% %LIB_FILES% /SUBSYSTEM:CONSOLE
 
 if %errorlevel% neq 0 (
     echo [ERROR] Bootstrap linkage failed.
 ) else (
-    echo [SUCCESS] ATOS Traffic Engine is now operational: atos_traffic_system.exe
+    echo [SUCCESS] ATOS Traffic Engine is now operational: bin\atos_traffic_system.exe
+    echo [ATOS] Cleaning up transient build artifacts...
+    del *.obj
 )
