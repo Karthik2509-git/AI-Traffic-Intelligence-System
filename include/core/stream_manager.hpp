@@ -9,7 +9,7 @@
 #include "core/concurrent_queue.hpp"
 #include "core/memory.hpp"
 
-namespace atos {
+namespace antigravity {
 namespace core {
 
 /**
@@ -61,4 +61,4 @@ private:
 };
 
 } // namespace core
-} // namespace atos
+} // namespace antigravity

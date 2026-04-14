@@ -1,7 +1,7 @@
 #include "core/stream_manager.hpp"
 #include <algorithm>
 
-namespace atos {
+namespace antigravity {
 namespace core {
 
 int StreamManager::addStream(const std::string& source) {
@@ -43,4 +43,4 @@ std::vector<int> StreamManager::getActiveStreamIds() const {
 }
 
 } // namespace core
-} // namespace atos
+} // namespace antigravity

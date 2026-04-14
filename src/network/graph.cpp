@@ -1,7 +1,7 @@
 #include "network/graph.hpp"
 #include "core/logger.hpp"
 
-namespace atos {
+namespace antigravity {
 namespace network {
 
 using namespace traffic;
@@ -59,5 +59,22 @@ float RoadGraph::estimateTravelTime(int fromId, int toId) const {
     return -1.0f;
 }
 
+void RoadGraph::updateDensity(int nodeId, float density) {
+    std::lock_guard<std::mutex> lock(graph_mutex);
+    if (nodes.find(nodeId) != nodes.end()) {
+        // Logically, we update the density of incoming segments or the node itself
+        // for simplicity in this city model, we track density per camera node
+        nodes[nodeId]->outgoing[0]->currentDensity = density; 
+    }
+}
+
+float RoadGraph::getDensity(int nodeId) const {
+    std::lock_guard<std::mutex> lock(graph_mutex);
+    if (nodes.find(nodeId) != nodes.end() && !nodes.at(nodeId)->outgoing.empty()) {
+        return nodes.at(nodeId)->outgoing[0]->currentDensity;
+    }
+    return 0.0f;
+}
+
 } // namespace network
-} // namespace atos
+} // namespace antigravity

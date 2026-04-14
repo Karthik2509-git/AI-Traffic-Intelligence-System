@@ -1,6 +1,6 @@
 #include "core/thread_pool.hpp"
 
-namespace atos {
+namespace antigravity {
 namespace core {
 
 ThreadPool::ThreadPool(size_t threads) {
@@ -41,4 +41,4 @@ void ThreadPool::stop() {
 }
 
 } // namespace core
-} // namespace atos
+} // namespace antigravity

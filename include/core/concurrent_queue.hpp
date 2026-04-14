@@ -5,7 +5,7 @@
 #include <condition_variable>
 #include <atomic>
 
-namespace atos {
+namespace antigravity {
 namespace core {
 
 /**
@@ -76,4 +76,4 @@ private:
 };
 
 } // namespace core
-} // namespace atos
+} // namespace antigravity

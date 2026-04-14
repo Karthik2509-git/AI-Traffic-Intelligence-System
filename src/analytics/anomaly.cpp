@@ -1,7 +1,7 @@
 #include "analytics/anomaly.hpp"
 #include <cmath>
 
-namespace atos {
+namespace antigravity {
 namespace analytics {
 
 std::vector<AnomalyDetector::Alert> AnomalyDetector::monitor(const std::vector<traffic::Track>& tracks) {
@@ -63,4 +63,4 @@ bool AnomalyDetector::checkWrongWay(const std::vector<cv::Point2f>& traj) {
 }
 
 } // namespace analytics
-} // namespace atos
+} // namespace antigravity

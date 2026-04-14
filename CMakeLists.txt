@@ -9,22 +9,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Release)
 
 # Optimized for RTX 50-series (Blackwell Architecture)
-# Note: Adjust compute capability if necessary (e.g., 9.0 for H100/Blackwell)
 set(CMAKE_CUDA_ARCHITECTURES 89 90) 
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
 
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
 
-# OpenCV
-find_package(OpenCV REQUIRED)
+# OpenCV (Manual Linkage for v18 compatibility)
+set(OpenCV_INCLUDE_DIRS "C:/opencv/build/include")
+set(OpenCV_LIBS "C:/opencv/build/x64/vc16/lib/opencv_world490.lib")
 include_directories(${OpenCV_INCLUDE_DIRS})
+link_directories("C:/opencv/build/x64/vc16/lib")
 
 # CUDA
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
-# TensorRT (Manually specified for standard Windows installs)
-set(TENSORRT_ROOT "C:/Program Files/NVIDIA GPU Computing Toolkit/TensorRT") # Placeholder path
+# TensorRT (Using verified local path)
+set(TENSORRT_ROOT "C:/TensorRT") 
 include_directories("${TENSORRT_ROOT}/include")
 link_directories("${TENSORRT_ROOT}/lib")
 

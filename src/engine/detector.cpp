@@ -7,7 +7,7 @@
 extern "C" void launch_fused_preprocess(const uint8_t* d_src, float* d_dst, int src_w, int src_h, int dst_w, int dst_h, cudaStream_t stream);
 extern "C" void launch_nms(const float* d_boxes, bool* d_keep_mask, int count, float threshold, cudaStream_t stream);
 
-namespace atos {
+namespace antigravity {
 namespace engine {
 
 Detector::Detector(const Config& config) : config(config) {
@@ -36,7 +36,7 @@ void Detector::initEngine() {
     file.read(engineData.data(), size);
     file.close();
 
-    runtime.reset(nvinfer1::createInferRuntime(*nvinfer1::getLogger()));
+    runtime.reset(nvinfer1::createInferRuntime(logger));
     engine.reset(runtime->deserializeCudaEngine(engineData.data(), size));
     context.reset(engine->createExecutionContext());
 
@@ -46,6 +46,10 @@ void Detector::initEngine() {
 
     cudaMalloc(&bindings[0], in_size);
     cudaMalloc(&bindings[1], out_size);
+
+    // TRT 10: Set input/output addresses
+    context->setTensorAddress("images", bindings[0]);
+    context->setTensorAddress("output0", bindings[1]);
     
     traffic::Logger::info("TensorRT 4K AI Engine initialized.");
 }
@@ -57,9 +61,8 @@ void Detector::process(const uint8_t* d_image_ptr, int src_w, int src_h) {
         src_w, src_h, config.input_w, config.input_h, stream
     );
 
-    // 2. High-Performance Parallel Inference
-    // enqueV2 is non-blocking on the CPU; it schedules the work on the GPU stream
-    context->enqueueV2(bindings, stream, nullptr);
+    // 2. High-Performance Parallel Inference (TensorRT 10 optimized)
+    context->enqueueV3(stream);
 
     // 3. Post-Inference: GPU-Bound NMS
     // Note: Boxes are extracted and filtered directly in CUDA memory
@@ -72,4 +75,4 @@ void Detector::process(const uint8_t* d_image_ptr, int src_w, int src_h) {
 }
 
 } // namespace engine
-} // namespace atos
+} // namespace antigravity

@@ -9,7 +9,7 @@
 #include <functional>
 #include <atomic>
 
-namespace atos {
+namespace antigravity {
 namespace core {
 
 /**
@@ -61,4 +61,4 @@ auto ThreadPool::enqueue(F&& f, Args&&... args) -> std::future<typename std::res
 }
 
 } // namespace core
-} // namespace atos
+} // namespace antigravity

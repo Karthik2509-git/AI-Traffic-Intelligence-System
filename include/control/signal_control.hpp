@@ -5,7 +5,7 @@
 #include <memory>
 #include <map>
 
-namespace atos {
+namespace antigravity {
 namespace control {
 
 /**
@@ -54,4 +54,4 @@ private:
 };
 
 } // namespace control
-} // namespace atos
+} // namespace antigravity

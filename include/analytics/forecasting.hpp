@@ -7,7 +7,7 @@
 #include <memory>
 #include <NvInfer.h>
 
-namespace atos {
+namespace antigravity {
 namespace analytics {
 
 /**
@@ -51,4 +51,4 @@ private:
 };
 
 } // namespace analytics
-} // namespace atos
+} // namespace antigravity

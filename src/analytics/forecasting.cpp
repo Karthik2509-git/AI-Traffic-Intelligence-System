@@ -2,7 +2,7 @@
 #include <numeric>
 #include <algorithm>
 
-namespace atos {
+namespace antigravity {
 namespace analytics {
 
 ForecastingEngine::ForecastingEngine(int historyWindow, int predictionHorizon)
@@ -58,4 +58,4 @@ float ForecastingEngine::runInference(const std::vector<float>& sequence) {
 }
 
 } // namespace analytics
-} // namespace atos
+} // namespace antigravity

@@ -7,8 +7,19 @@
 #include <cuda_runtime_api.h>
 #include "core/memory.hpp"
 
-namespace atos {
+namespace antigravity {
 namespace engine {
+
+/**
+ * @brief Logger for TensorRT diagnostics.
+ */
+class TRTLogger : public nvinfer1::ILogger {
+    void log(Severity severity, const char* msg) noexcept override {
+        if (severity <= Severity::kWARNING) {
+            std::cout << "[TRT] " << msg << std::endl;
+        }
+    }
+};
 
 /**
  * @brief High-Performance TensorRT Detector.
@@ -41,6 +52,7 @@ private:
     Config config;
     
     // TensorRT Core
+    TRTLogger logger;
     std::unique_ptr<nvinfer1::IRuntime> runtime;
     std::unique_ptr<nvinfer1::ICudaEngine> engine;
     std::unique_ptr<nvinfer1::IExecutionContext> context;
@@ -53,4 +65,4 @@ private:
 };
 
 } // namespace engine
-} // namespace atos
+} // namespace antigravity

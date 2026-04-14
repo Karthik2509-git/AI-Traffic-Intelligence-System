@@ -10,8 +10,7 @@
 #include <thread>
 #include <atomic>
 
-using namespace atos::core;
-using namespace atos::engine;
+// Standard include guards and modern C++ orchestration
 
 /**
  * @brief Antigravity Traffic Omni-System (ATOS) - Production Pipeline
@@ -27,7 +26,7 @@ std::atomic<bool> g_running{true};
 // ---------------------------------------------------------------------------
 struct PipelineFrame {
     int streamId;
-    std::shared_ptr<PinnedBuffer<uint8_t>> buffer;
+    std::shared_ptr<::antigravity::core::PinnedBuffer<uint8_t>> buffer;
     cv::Mat frame; // Wrapper for the pinned buffer
     int width, height;
     std::chrono::steady_clock::time_point timestamp;
@@ -36,8 +35,8 @@ struct PipelineFrame {
 // ---------------------------------------------------------------------------
 // Global Queues (High-Throughput)
 // ---------------------------------------------------------------------------
-ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_inferenceQueue(32);
-ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_analyticsQueue(32);
+::antigravity::core::ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_inferenceQueue(32);
+::antigravity::core::ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_analyticsQueue(32);
 
 // ---------------------------------------------------------------------------
 // Capture Worker (Producer)
@@ -61,7 +60,7 @@ void captureWorker(int streamId, std::string source) {
         // Optimized Path: Use Pinned Memory for Zero-Copy H2D transfer
         pFrame->width = temp.cols;
         pFrame->height = temp.rows;
-        pFrame->buffer = std::make_shared<PinnedBuffer<uint8_t>>(pFrame->width * pFrame->height * 3);
+        pFrame->buffer = std::make_shared<::antigravity::core::PinnedBuffer<uint8_t>>(pFrame->width * pFrame->height * 3);
         
         // Wrap pinned memory in cv::Mat and Copy
         pFrame->frame = cv::Mat(pFrame->height, pFrame->width, CV_8UC3, pFrame->buffer->get());
@@ -79,13 +78,13 @@ int main(int argc, char** argv) {
     logger.info("ATOS Initializing: World-Class Traffic Intelligence Pipeline...");
 
     try {
-        // 1. Setup GPU Engine
-        Detector::Config detConfig;
+        // 1. Setup GPU Engine (Root Scoping)
+        ::antigravity::engine::Detector::Config detConfig;
         detConfig.engine_path = "data/yolov8_4k_optimized.engine";
-        Detector detector(detConfig);
+        ::antigravity::engine::Detector detector(detConfig);
 
         // 2. Setup Multi-Camera Management
-        auto& sm = StreamManager::getInstance();
+        auto& sm = ::antigravity::core::StreamManager::getInstance();
         int s1 = sm.addStream("rtsp://192.168.1.10:8080/live"); // Cam 1
         int s2 = sm.addStream("rtsp://192.168.1.11:8080/live"); // Cam 2
 

@@ -6,7 +6,7 @@
 #include <memory>
 #include <mutex>
 
-namespace atos {
+namespace antigravity {
 namespace network {
 
 /**
@@ -50,6 +50,16 @@ public:
      */
     float estimateTravelTime(int fromId, int toId) const;
 
+    /**
+     * @brief High-frequency update of lane density.
+     */
+    void updateDensity(int nodeId, float density);
+
+    /**
+     * @brief Get current density for a node.
+     */
+    float getDensity(int nodeId) const;
+
 private:
     struct Node {
         int id;
@@ -62,4 +72,4 @@ private:
 };
 
 } // namespace network
-} // namespace atos
+} // namespace antigravity
