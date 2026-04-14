@@ -24,6 +24,13 @@ public:
         if (err != cudaSuccess) {
             throw std::runtime_error("Failed to allocate pinned memory: " + std::string(cudaGetErrorString(err)));
         }
+
+        // Retrieve the Device Pointer for use in kernels
+        err = cudaHostGetDevicePointer((void**)&d_ptr, (void*)ptr, 0);
+        if (err != cudaSuccess) {
+            cudaFreeHost(ptr);
+            throw std::runtime_error("Failed to get device pointer: " + std::string(cudaGetErrorString(err)));
+        }
     }
 
     ~PinnedBuffer() {
@@ -36,11 +43,16 @@ public:
 
     T* get() { return ptr; }
     const T* get() const { return ptr; }
+    
+    T* getDevicePtr() { return d_ptr; }
+    const T* getDevicePtr() const { return d_ptr; }
+
     size_t size() const { return count; }
     size_t byte_size() const { return count * sizeof(T); }
 
 private:
     T* ptr = nullptr;
+    T* d_ptr = nullptr;
     size_t count;
 };
 

@@ -1,47 +1,47 @@
 #pragma once
 
-#include <vector>
 #include <string>
-#include <map>
+#include <vector>
+#include <memory>
 #include "core/types.hpp"
 
-namespace atos {
+namespace antigravity {
 namespace simulation {
 
 /**
- * @brief City-scale Digital Twin Synchronization Engine.
+ * @brief High-Performance Digital Twin Synchronization Bridge.
  * 
- * Synchronizes real-world traffic data (ID signatures, trajectories, signal states) 
- * with a virtual environment in CARLA or SUMO via gRPC or LibCarla.
+ * Streams real-time traffic telemetry from the 4K AI engine to 
+ * external simulation environments (CARLA/SUMO) via UDP/JSON.
  */
-class DigitalTwinSync {
+class DigitalTwinBridge {
 public:
-    struct SimObject {
-        int globalId;
-        cv::Point3f position;
-        float velocity;
-        std::string vehicleType;
+    struct Config {
+        std::string target_ip = "127.0.0.1";
+        int target_port = 5005;
+        int sync_rate_hz = 10;
     };
 
-    DigitalTwinSync(const std::string& host = "localhost", int port = 2000);
+    DigitalTwinBridge(const Config& config);
+    ~DigitalTwinBridge();
 
     /**
-     * @brief High-frequency sync of the ATOS global state to the Digital Twin.
+     * @brief Send a snapshot of the current city state to the virtual twin.
      */
-    void sync(const std::vector<SimObject>& objects, int activeSignalPhase);
+    void syncState(float city_pressure, int active_phase);
 
     /**
-     * @brief Command the simulation to run a "what-if" congestion forecast.
+     * @brief Broadcast a safety incident to the simulator for event simulation.
      */
-    void triggerProjection(float intensityMultiplier);
+    void broadcastIncident(const std::string& incident_type, int nodeId);
 
 private:
-    std::string sim_host;
-    int sim_port;
+    Config config;
+    int socket_fd;
 
-    // Simulation client (LibCarla or TraCI)
-    void connectSimulation();
+    void initSocket();
+    void closeSocket();
 };
 
 } // namespace simulation
-} // namespace atos
+} // namespace antigravity

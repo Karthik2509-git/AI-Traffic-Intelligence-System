@@ -23,6 +23,7 @@ struct Detection {
 struct Track {
     int id;
     cv::Rect bbox;
+    float confidence;
     float velocity;
     std::vector<cv::Point2f> history;
     std::chrono::system_clock::time_point lastSeen;

@@ -1,51 +1,45 @@
 #include "core/logger.hpp"
 #include "core/concurrent_queue.hpp"
 #include "core/memory.hpp"
+#include "core/types.hpp"
 #include "core/stream_manager.hpp"
-#include "core/thread_pool.hpp"
 #include "engine/detector.hpp"
+#include "network/city_controller.hpp"
+#include "simulation/digital_twin.hpp"
+
 #include <opencv2/opencv.hpp>
 #include <chrono>
 #include <iostream>
 #include <thread>
 #include <atomic>
 
-// Standard include guards and modern C++ orchestration
-
 /**
  * @brief Antigravity Traffic Omni-System (ATOS) - Production Pipeline
- * 
- * Version: 1.0 (Master-Class Implementation)
- * Architecture: Asynchronous Multi-camera Data-Parallel Pipeline
+ * Version: 2.0 (Autonomous Global Intelligence Edition)
  */
 
 std::atomic<bool> g_running{true};
 
-// ---------------------------------------------------------------------------
-// Pipeline Structs
-// ---------------------------------------------------------------------------
 struct PipelineFrame {
     int streamId;
     std::shared_ptr<::antigravity::core::PinnedBuffer<uint8_t>> buffer;
-    cv::Mat frame; // Wrapper for the pinned buffer
+    cv::Mat frame; 
     int width, height;
     std::chrono::steady_clock::time_point timestamp;
+    std::vector<::traffic::Track> results;
 };
 
-// ---------------------------------------------------------------------------
-// Global Queues (High-Throughput)
-// ---------------------------------------------------------------------------
+// Global High-Throughput Buffers
 ::antigravity::core::ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_inferenceQueue(32);
-::antigravity::core::ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_analyticsQueue(32);
 
-// ---------------------------------------------------------------------------
-// Capture Worker (Producer)
-// ---------------------------------------------------------------------------
+// Global Intelligence Nodes
+std::shared_ptr<::antigravity::network::CityController> g_cityController;
+std::shared_ptr<::antigravity::simulation::DigitalTwinBridge> g_twinBridge;
+
 void captureWorker(int streamId, std::string source) {
-    auto& logger = traffic::Logger::getInstance();
     cv::VideoCapture cap(source);
     if (!cap.isOpened()) {
-        logger.error("CaptureWorker: Failed to connect to " + source);
+        ::traffic::Logger::error("CaptureWorker: Failed to connect to " + source);
         return;
     }
 
@@ -57,12 +51,9 @@ void captureWorker(int streamId, std::string source) {
         cv::Mat temp;
         if (!cap.read(temp)) break;
 
-        // Optimized Path: Use Pinned Memory for Zero-Copy H2D transfer
         pFrame->width = temp.cols;
         pFrame->height = temp.rows;
         pFrame->buffer = std::make_shared<::antigravity::core::PinnedBuffer<uint8_t>>(pFrame->width * pFrame->height * 3);
-        
-        // Wrap pinned memory in cv::Mat and Copy
         pFrame->frame = cv::Mat(pFrame->height, pFrame->width, CV_8UC3, pFrame->buffer->get());
         temp.copyTo(pFrame->frame);
 
@@ -70,53 +61,69 @@ void captureWorker(int streamId, std::string source) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Main Orchestrator
-// ---------------------------------------------------------------------------
+void digitalTwinSyncWorker() {
+    while (g_running) {
+        if (g_cityController && g_twinBridge) {
+            float pressure = g_cityController->getGlobalPressure();
+            g_twinBridge->syncState(pressure, 0); // Fixed ID for demo
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 10Hz Heartbeat
+    }
+}
+
 int main(int argc, char** argv) {
-    auto& logger = traffic::Logger::getInstance();
-    logger.info("ATOS Initializing: World-Class Traffic Intelligence Pipeline...");
+    ::traffic::Logger::info("ATOS 2.0: Initializing Autonomous Intelligence Node...");
 
     try {
-        // 1. Setup GPU Engine (Root Scoping)
+        // 1. Setup City Strategy & 3. Initialize Global Intelligence Modules
+        auto graph = std::make_shared<::antigravity::network::RoadGraph>();
+        graph->addCameraNode(0, "Main Intersection 4K-Alpha");
+        graph->addRoadConnection(0, 1, 500.0f); // Link to virtual node 1
+        graph->addRoadConnection(0, 1, 500.0f); // Seed 500m exit segment for density tracking
+
+        auto signals = std::make_shared<::antigravity::control::RLSignalController>("data/ppo_policy_4k.onnx");
+        g_cityController = std::make_shared<::antigravity::network::CityController>(graph, signals);
+        
+        ::antigravity::simulation::DigitalTwinBridge::Config twinConfig;
+        twinConfig.target_ip = "127.0.0.1";
+        twinConfig.target_port = 5005;
+        g_twinBridge = std::make_shared<::antigravity::simulation::DigitalTwinBridge>(twinConfig);
+
+        // 3. Setup GPU Inference Engine (RTX 50-series optimized)
         ::antigravity::engine::Detector::Config detConfig;
         detConfig.engine_path = "data/yolov8_4k_optimized.engine";
         ::antigravity::engine::Detector detector(detConfig);
 
-        // 2. Setup Multi-Camera Management
-        auto& sm = ::antigravity::core::StreamManager::getInstance();
-        int s1 = sm.addStream("rtsp://192.168.1.10:8080/live"); // Cam 1
-        int s2 = sm.addStream("rtsp://192.168.1.11:8080/live"); // Cam 2
+        // 4. Launch Support Threads
+        std::thread t1(captureWorker, 0, "data/test_4k_traffic.mp4");
+        std::thread syncThread(digitalTwinSyncWorker);
 
-        // 3. Launch Capture Threads
-        std::thread t1(captureWorker, s1, "data/test_4k_traffic.mp4");
-        std::thread t2(captureWorker, s2, "data/test_4k_highway.mp4");
+        ::traffic::Logger::info("ATOS 2.0 Operational. High-Performance Autonomous Intelligence Active.");
 
-        // 4. Main AI Inference Loop (The GPU Orchestrator)
+        // 5. Main Autonomous AI Loop
         while (g_running) {
             std::shared_ptr<PipelineFrame> pFrame;
             if (g_inferenceQueue.pop(pFrame)) {
-                auto start = std::chrono::steady_clock::now();
+                // Perform High-Speed 4K Inference using Zero-Copy Device Pointer
+                pFrame->results = detector.process(pFrame->buffer->getDevicePtr(), pFrame->width, pFrame->height);
 
-                // Advanced Phase 2 Call: Fused Kernel + TensorRT
-                detector.process(pFrame->buffer->get(), pFrame->width, pFrame->height);
+                // Update the City Brain with new tracks
+                g_cityController->updateTracks(pFrame->results);
 
-                auto end = std::chrono::steady_clock::now();
-                auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(end - pFrame->timestamp).count();
+                auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - pFrame->timestamp).count();
                 
-                if (latency > 33) {
-                   logger.warn("Pipeline Latency Spiked: " + std::to_string(latency) + "ms");
-                }
-
-                g_analyticsQueue.push(std::move(pFrame));
+                ::traffic::Logger::info("Frame " + std::to_string(pFrame->streamId) + " | Latency: " + 
+                         std::to_string(latency) + "ms | Global Pressure: " + 
+                         std::to_string(g_cityController->getGlobalPressure()));
             }
         }
 
         t1.join();
-        t2.join();
+        syncThread.join();
 
     } catch (const std::exception& e) {
-        logger.error("ATOS Fatal Crash: " + std::string(e.what()));
+        ::traffic::Logger::error("ATOS 2.0 Fatal Crash: " + std::string(e.what()));
         return -1;
     }
 

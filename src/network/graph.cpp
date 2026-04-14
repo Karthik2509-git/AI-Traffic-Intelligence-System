@@ -61,7 +61,7 @@ float RoadGraph::estimateTravelTime(int fromId, int toId) const {
 
 void RoadGraph::updateDensity(int nodeId, float density) {
     std::lock_guard<std::mutex> lock(graph_mutex);
-    if (nodes.find(nodeId) != nodes.end()) {
+    if (nodes.find(nodeId) != nodes.end() && !nodes[nodeId]->outgoing.empty()) {
         // Logically, we update the density of incoming segments or the node itself
         // for simplicity in this city model, we track density per camera node
         nodes[nodeId]->outgoing[0]->currentDensity = density; 

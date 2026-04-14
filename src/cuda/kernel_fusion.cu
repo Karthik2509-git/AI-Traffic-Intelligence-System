@@ -69,6 +69,9 @@ __global__ void fused_preprocess_kernel_shared(
     }
 }
 
+} // namespace cuda
+} // namespace atos
+
 extern "C" void launch_fused_preprocess(
     const uint8_t* d_src,
     float* d_dst,
@@ -82,10 +85,7 @@ extern "C" void launch_fused_preprocess(
     float scale_x = (float)src_w / dst_w;
     float scale_y = (float)src_h / dst_h;
 
-    fused_preprocess_kernel_shared<<<grid, block, 0, stream>>>(
+    atos::cuda::fused_preprocess_kernel_shared<<<grid, block, 0, stream>>>(
         d_src, d_dst, src_w, src_h, dst_w, dst_h, scale_x, scale_y
     );
 }
-
-} // namespace cuda
-} // namespace atos

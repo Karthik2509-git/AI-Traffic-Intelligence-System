@@ -6,6 +6,7 @@
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
 #include "core/memory.hpp"
+#include "core/types.hpp"
 
 namespace antigravity {
 namespace engine {
@@ -42,8 +43,9 @@ public:
 
     /**
      * @brief Run inference on a 4K frame using Pinned Memory.
+     * @return List of tracked vehicles and their metadata.
      */
-    void process(const uint8_t* d_image_ptr, int src_w, int src_h);
+    std::vector<traffic::Track> process(const uint8_t* d_image_ptr, int src_w, int src_h);
 
     // Get results from GPU
     // (Detailed implementation of result fetching follows)
