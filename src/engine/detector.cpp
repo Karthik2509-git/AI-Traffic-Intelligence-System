@@ -76,13 +76,35 @@ std::vector<::traffic::Track> Detector::process(const uint8_t* d_image_ptr, int 
     // 3. Post-Inference: GPU-Bound NMS and Tracking
     cudaStreamSynchronize(stream);
 
+    // Retrieve Detections from Device Output Buffer
+    float* d_out = static_cast<float*>(bindings[1]);
+    std::vector<float> h_out(84 * 8400); 
+    cudaMemcpyAsync(h_out.data(), d_out, h_out.size() * sizeof(float), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
+
     std::vector<::traffic::Track> tracks;
-    for (int i = 0; i < 8; ++i) {
-        ::traffic::Track t;
-        t.id = i;
-        t.confidence = 0.98f;
-        t.bbox = cv::Rect(120 * i, 300, 60, 60);
-        tracks.push_back(t);
+    // Real YOLOv8 Parsing Logic (Simplified for demonstration, mapping 8 best hits)
+    // Structure: [x, y, w, h, score, class_probs...] x 8400
+    for (int i = 0; i < 8400 && tracks.size() < 32; ++i) {
+        float score = h_out[4 * 8400 + i]; // Score at row 4
+        if (score > config.conf_threshold) {
+            ::traffic::Track t;
+            t.id = static_cast<int>(tracks.size());
+            t.confidence = score;
+            
+            float cx = h_out[0 * 8400 + i];
+            float cy = h_out[1 * 8400 + i];
+            float w = h_out[2 * 8400 + i];
+            float h = h_out[3 * 8400 + i];
+            
+            t.bbox = cv::Rect(
+                static_cast<int>((cx - w/2) * src_w / config.input_w),
+                static_cast<int>((cy - h/2) * src_h / config.input_h),
+                static_cast<int>(w * src_w / config.input_w),
+                static_cast<int>(h * src_h / config.input_h)
+            );
+            tracks.push_back(t);
+        }
     }
 
     return tracks;

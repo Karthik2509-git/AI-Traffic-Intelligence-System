@@ -22,6 +22,7 @@ std::atomic<bool> g_running{true};
 
 struct PipelineFrame {
     int streamId;
+    uint64_t frameIndex;
     std::shared_ptr<::antigravity::core::PinnedBuffer<uint8_t>> buffer;
     cv::Mat frame; 
     int width, height;
@@ -37,27 +38,39 @@ std::shared_ptr<::antigravity::network::CityController> g_cityController;
 std::shared_ptr<::antigravity::simulation::DigitalTwinBridge> g_twinBridge;
 
 void captureWorker(int streamId, std::string source) {
-    cv::VideoCapture cap(source);
-    if (!cap.isOpened()) {
-        ::traffic::Logger::error("CaptureWorker: Failed to connect to " + source);
-        return;
-    }
+    ::traffic::Logger::info("CaptureWorker: Attempting connection to " + source);
+    uint64_t frameIndex = 0;
 
     while (g_running) {
-        auto pFrame = std::make_shared<PipelineFrame>();
-        pFrame->streamId = streamId;
-        pFrame->timestamp = std::chrono::steady_clock::now();
+        cv::VideoCapture cap(source);
+        if (!cap.isOpened()) {
+            ::traffic::Logger::error("CaptureWorker: Failed to connect to source. Retrying in 2 seconds...");
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
 
-        cv::Mat temp;
-        if (!cap.read(temp)) break;
+        while (g_running) {
+            auto pFrame = std::make_shared<PipelineFrame>();
+            pFrame->streamId = streamId;
+            pFrame->frameIndex = frameIndex++;
+            pFrame->timestamp = std::chrono::steady_clock::now();
 
-        pFrame->width = temp.cols;
-        pFrame->height = temp.rows;
-        pFrame->buffer = std::make_shared<::antigravity::core::PinnedBuffer<uint8_t>>(pFrame->width * pFrame->height * 3);
-        pFrame->frame = cv::Mat(pFrame->height, pFrame->width, CV_8UC3, pFrame->buffer->get());
-        temp.copyTo(pFrame->frame);
+            cv::Mat temp;
+            if (!cap.read(temp)) {
+                ::traffic::Logger::warn("CaptureWorker: Stream Interrupted. Reconnecting...");
+                break;
+            }
 
-        g_inferenceQueue.push(std::move(pFrame));
+            pFrame->width = temp.cols;
+            pFrame->height = temp.rows;
+
+            // Zero-Copy Memory Allocation (Pinned Memory for Direct GPU Access)
+            pFrame->buffer = std::make_shared<::antigravity::core::PinnedBuffer<uint8_t>>(pFrame->width * pFrame->height * 3);
+            pFrame->frame = cv::Mat(pFrame->height, pFrame->width, CV_8UC3, pFrame->buffer->get());
+            temp.copyTo(pFrame->frame);
+
+            g_inferenceQueue.push(std::move(pFrame));
+        }
     }
 }
 
@@ -118,8 +131,8 @@ int main(int argc, char** argv) {
                 auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - pFrame->timestamp).count();
                 
-                ::traffic::Logger::info("Frame " + std::to_string(pFrame->streamId) + " | Latency: " + 
-                         std::to_string(latency) + "ms | Global Pressure: " + 
+                ::traffic::Logger::info("Stream " + std::to_string(pFrame->streamId) + " | Seq: " + std::to_string(pFrame->frameIndex) + 
+                         " | Latency: " + std::to_string(latency) + "ms | Global Pressure: " + 
                          std::to_string(g_cityController->getGlobalPressure()));
             }
         }
