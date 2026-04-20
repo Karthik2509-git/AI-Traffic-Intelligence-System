@@ -11,8 +11,8 @@ namespace analytics {
 /**
  * @brief High-Performance Density & Traffic Pressure Analyzer.
  * 
- * Computes lane-level and intersection-level metrics to inform the RL 
- * signal controller and the forecasting engine.
+ * Computes lane-level and intersection-level metrics to inform the
+ * signal controller and city pressure calculations.
  */
 class DensityEngine {
 public:

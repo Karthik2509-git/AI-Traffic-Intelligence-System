@@ -2,55 +2,41 @@
 
 #include <vector>
 #include <string>
-#include <memory>
-#include <map>
 
 namespace antigravity {
 namespace control {
 
 /**
- * @brief Adaptive Signal Control Action.
+ * @brief Signal phase action output.
  */
 struct SignalAction {
     int phase_id;
-    int duration_extension; // in seconds
+    int duration_extension; // seconds
     bool skip_phase;
 };
 
 /**
- * @brief Reinforcement Learning-based Adaptive Signal Controller.
- * 
- * An autonomous agent that observes intersection pressure and computes 
- * optimal signal timings using a Proximal Policy Optimization (PPO) model.
+ * @brief Density-threshold adaptive signal controller.
+ *
+ * Observes lane densities and queue lengths at an intersection,
+ * then extends the green phase for the most congested lane.
+ * This is a heuristic controller — no ML model is used.
  */
-class RLSignalController {
+class SignalController {
 public:
     struct Observation {
         std::vector<float> lane_densities;
         std::vector<float> queue_lengths;
-        std::vector<float> neighbor_pressures;
         float time_of_day;
     };
 
-    RLSignalController(const std::string& policy_path);
+    SignalController();
 
-    /**
-     * @brief Compute the optimal phase update based on current observations.
-     */
+    /** Compute signal timing adjustment based on current densities. */
     SignalAction computePolicy(const Observation& obs);
 
-    /**
-     * @brief Feed reward back to the environment (during training/sim).
-     */
+    /** Placeholder for future online-learning reward feedback. */
     void updateReward(float throughput_reward, float wait_penalty);
-
-private:
-    std::string policy_path;
-    
-    // LibTorch or ONNX Runtime Inference Engine for Policy Net
-    // std::unique_ptr<InferenceEngine> model;
-
-    void loadModel();
 };
 
 } // namespace control

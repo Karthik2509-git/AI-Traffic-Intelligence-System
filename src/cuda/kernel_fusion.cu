@@ -5,14 +5,14 @@ namespace atos {
 namespace cuda {
 
 /**
- * @brief World-Class Fused Preprocessing Kernel for ATOS.
+ * @brief Fused preprocessing kernel.
  * 
- * Combines:
- * 1. Bilinear Resizing 
- * 2. BGR to RGB Planar Swap
- * 3. Floating-Point Normalization (0-1.0)
+ * Single-pass GPU kernel that performs:
+ * 1. Bilinear resize (source resolution → 640x640)
+ * 2. BGR → RGB channel reorder
+ * 3. Float normalization (0–255 → 0.0–1.0)
  * 
- * Optimized with Shared Memory tiling to reduce global memory pressure on the RTX 5050.
+ * Output is NCHW planar layout, ready for TensorRT input.
  */
 __global__ void fused_preprocess_kernel_shared(
     const uint8_t* __restrict__ src,
@@ -65,7 +65,14 @@ __global__ void fused_preprocess_kernel_shared(
                           u * v * v22;
 
         // Write to planar memory and normalize
-        dst[c * dst_area + out_idx] = pixel_val / 255.0f;
+        float normalized = pixel_val / 255.0f;
+
+        // Lightweight Contrast Enhancement (1.1x boost)
+        // Helps highlight vehicle edges in blurry inputs
+        normalized = (normalized - 0.5f) * 1.1f + 0.5f;
+        normalized = fmaxf(0.0f, fminf(1.0f, normalized));
+
+        dst[c * dst_area + out_idx] = normalized;
     }
 }
 

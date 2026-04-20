@@ -1,111 +1,129 @@
-# Industrial AI Traffic Intelligence System (AITIS)
+# AI Traffic Intelligence System (ATOS v2.0)
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![YOLOv8](https://img.shields.io/badge/Computer%20Vision-YOLOv8-orange.svg)](https://ultralytics.com/)
-[![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B.svg)](https://streamlit.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-An industrial-grade, real-time traffic monitoring and optimization engine powered by computer vision and machine learning. Designed for urban infrastructure management, this system provides high-fidelity vehicle tracking, behavioral analytics, and autonomous signal coordination.
+A real-time traffic monitoring system built in C++/CUDA, using TensorRT-accelerated YOLOv8 inference on NVIDIA GPUs. Captures live video (IP Webcam or file), detects vehicles, computes traffic density, runs anomaly detection, and streams telemetry over UDP.
 
 ---
 
-## 🚦 Key Capabilities
+## Architecture
 
-- **High-Precision Multi-Object Tracking (MOT)**: Advanced SORT implementation with Kalman filtering for robust vehicle persistence across occlusions.
-- **Adaptive Signal Optimization**: Proportional-weighted phase allocation based on real-time demand, forecasted congestion, and starvation prevention heuristics.
-- **Forecasting & Predictive Analytics**: Calibrated Gradient Boosting models for short-term congestion state prediction (Low/Medium/High).
-- **Spatial Topology Analysis**: Lane-aware density monitoring with polygonal ROI segmentation and occupancy ratio calculation.
-- **Telemetry & Behavioral Insights**: Real-time speed estimation, anomalous event detection (stagnation, flow-drops, surges), and historical trend analysis.
-- **Enterprise-Ready Infrastructure**: SQLite/WAL persistence, multi-camera orchestration, and a centralized `settings.yaml` configuration architecture.
-
----
-
-## 🏗️ System Architecture
-
-### Vision Pipeline
-The core pipeline (`TrafficPipeline`) orchestrates frames through:
-1. **Detection Interface**: Multi-scale YOLOv8 inference with Tiled Inference support for high-density environments.
-2. **Object Tracking**: Temporal association and trajectory management.
-3. **Analytics Engines**:
-   - `DensityAnalyzer`: Spatial volume and flow metrics.
-   - `SpeedAnalyzer`: Multi-stage filtered telemetry (EMA + Median).
-   - `AnomalyDetector`: Statistical monitoring for infrastructure incidents.
-4. **Coordination Logic**: `SignalOptimizer` recommending real-time phase adjustments.
-
-### Technology Stack
-- **Vision**: Ultralytics (YOLOv8)
-- **Analytics**: NumPy, SciPy, Pandas
-- **Dashboard**: Streamlit, Altair
-- **Forecasting**: Scikit-learn (Gradient Boosting)
-- **Database**: SQLite3 (WAL Mode)
-
----
-
-## 🛠️ Installation & Setup
-
-### Prerequisites
-- Python 3.10 or higher
-- NVIDIA GPU with CUDA support (Recommended for high-res inference)
-
-### Configuration
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Karthik2509-git/AI-Traffic-Intelligence-System.git
-   cd AI-Traffic-Intelligence-System
-   ```
-2. Set up a virtual environment:
-   ```bash
-   python -m venv venv
-   .\venv\Scripts\activate  # Windows
-   source venv/bin/activate  # Linux/macOS
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
----
-
-## 🚀 Usage
-
-### 1. Launch the Intelligence Dashboard
-The primary interface for monitoring and system calibration.
-```bash
-streamlit run src/dashboard.py
+```
+Video Source → OpenCV Capture → CUDA Pinned Memory → TensorRT YOLOv8 → Analytics → UDP Telemetry
+     ↑                                                      ↓
+  IP Webcam                                         Signal Controller
+  or .mp4 file                                      Anomaly Detector
+                                                    Density Engine
 ```
 
-### 2. Configure Operational Parameters
-Tweak all thresholds, lane polygons, and model weights in `config/settings.yaml`.
+### Pipeline Stages
 
-### 3. Verification & CI
-Run the comprehensive unit test suite (86 tests) to ensure system stability:
-```bash
-pytest test.py -v
+1. **Capture** — `cv::VideoCapture` reads frames from RTSP/HTTP streams or local files. Auto-reconnects on stream interruption.
+2. **Preprocessing** — Fused CUDA kernel performs bilinear resize (source → 640×640), BGR→RGB conversion, and float normalization in a single GPU pass.
+3. **Inference** — TensorRT 10 `enqueueV3` executes the serialized YOLOv8 engine. Detections are parsed with class-aware confidence extraction (vehicle classes only: car, motorcycle, bus, truck) and CPU-side NMS.
+4. **Analytics** — `CityController` coordinates:
+   - `DensityEngine`: vehicle count, lane occupancy, normalized density
+   - `AnomalyDetector`: trajectory-based accident detection (stall detection)
+   - `SignalController`: density-threshold heuristic for green phase timing
+5. **Telemetry** — `DigitalTwinBridge` streams JSON via UDP to a Python receiver at 10 Hz.
+
+---
+
+## Hardware Requirements
+
+- **GPU**: NVIDIA GPU with CUDA support (developed on RTX 5050)
+- **CUDA**: 12.4
+- **TensorRT**: 10.x
+- **OpenCV**: 4.9.0 (with prebuilt binaries)
+- **Compiler**: Visual Studio 2022+ Build Tools (tested with VS 2026 v18)
+
+---
+
+## Build
+
+```batch
+build.bat
+```
+
+This script:
+1. Initializes the VS build environment via `vcvarsall.bat`
+2. Compiles all C++ sources with `cl.exe`
+3. Compiles CUDA kernels with `nvcc -allow-unsupported-compiler`
+4. Links against OpenCV, TensorRT, and CUDA runtime
+
+Output: `bin/atos_traffic_system.exe`
+
+---
+
+## Run
+
+```batch
+:: Default test video
+run.bat
+
+:: Live phone camera (requires IP Webcam app on Android)
+run.bat mobile
+
+:: Custom source
+run.bat http://192.168.1.50:8080/video
+run.bat path\to\traffic_video.mp4
+```
+
+### Telemetry Receiver
+
+In a separate terminal:
+```
+python run_atos_telem_test.py
+```
+
+This prints live JSON packets: pressure, signal phase, vehicle count.
+
+---
+
+## Project Structure
+
+```
+├── build.bat                     # Build script (VS2026 + CUDA 12.4)
+├── run.bat                       # Unified launcher
+├── run_atos_telem_test.py        # UDP telemetry receiver
+├── include/                      # C++ headers
+│   ├── core/                     # Logger, memory, types, concurrent queue
+│   ├── engine/                   # TensorRT detector
+│   ├── analytics/                # Anomaly detector, density engine
+│   ├── control/                  # Signal controller
+│   ├── network/                  # City controller, road graph
+│   └── simulation/               # UDP telemetry bridge
+├── src/                          # C++ source files
+│   ├── main.cpp                  # Entry point and pipeline orchestrator
+│   ├── engine/detector.cpp       # TensorRT inference + YOLOv8 parsing + NMS
+│   ├── analytics/                # Anomaly detection, density calculation
+│   ├── control/signal_control.cpp
+│   ├── network/                  # City controller, road graph
+│   ├── simulation/digital_twin.cpp
+│   └── cuda/kernel_fusion.cu     # Fused GPU preprocessing kernel
+├── data/                         # Model files and test data
+│   ├── yolov8_4k_optimized.engine
+│   ├── yolov8_4k_optimized.onnx
+│   └── test_4k_traffic.mp4
+├── config/settings.yaml          # Runtime configuration
+├── tools/export_model.py         # ONNX model export utility
+├── scripts/generate_synthetic_video.py
+├── legacy/                       # Archived Python v1 system
+└── output/                       # Runtime output (logs, frames)
 ```
 
 ---
 
-## 📊 Feature Highlights
+## Configuration
 
-### High-Resolution Inference Mode (1280px)
-Optimized for wide-field infrastructure cameras. Self-calibrates the model scale to maximize detection precision for distant vehicles.
-
-### Tiled Inference Pipeline
-Dynamically segments the input frame into overlapping tiles to detect small-scale vehicles in extremely dense traffic where global inference might fail.
-
-### Long-Range Detection Handling
-Heuristic-based filtering that suppresses uncertain or distant detections to maintain high-signal telemetry for signal timing decisions.
+Edit `config/settings.yaml` to adjust detection thresholds, telemetry target, and model paths.
 
 ---
 
-## 👨‍💻 Developer & Portfolio Context
-This project was refactored for **industrial-grade technical credibility**, featuring:
-- **Strict PEP 484 Type Hinting** across the entire codebase.
-- **NumPy-style Docstrings** for all library and engine modules.
-- **Clean Architecture** with clear separation between vision, orchestration, and UI layers.
-- **Robust Error Handling** and factory-based configuration patterns.
+## Legacy Python System
+
+The `legacy/` directory contains the original Python-based system (YOLOv8 + Streamlit + SQLite). It is archived for reference. The current v2 system is the C++/CUDA pipeline described above.
 
 ---
 
-## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## License
+
+MIT — see [LICENSE](LICENSE).

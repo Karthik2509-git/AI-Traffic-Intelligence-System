@@ -11,10 +11,11 @@ namespace antigravity {
 namespace analytics {
 
 /**
- * @brief High-Fidelity Anomaly & Safety Incident Detector.
+ * @brief Trajectory-based anomaly detector.
  * 
- * Uses spatial-temporal trajectory analysis to detect accidents, 
- * wrong-way drivers, and stalled vehicles in real-time.
+ * Monitors vehicle tracks for behavioral anomalies:
+ * - Accident detection via trajectory stall analysis
+ * - Wrong-way detection (placeholder — requires lane orientation data)
  */
 class AnomalyDetector {
 public:

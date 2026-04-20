@@ -1,125 +1,42 @@
 # ═══════════════════════════════════════════════════════════════════
-# AI Traffic Intelligence System — Master Configuration
+# ATOS v2.0 — C++ Engine Configuration
 # ═══════════════════════════════════════════════════════════════════
 
-# ── Model ───────────────────────────────────────────────────────────
-model:
-  name: yolov8m.pt          # Default model. Medium is the High-Resolution standard.
-  available_models:         # Options: yolov8n / s / m / l / x
-    - yolov8n.pt
-    - yolov8s.pt
-    - yolov8m.pt
-    - yolov8l.pt
-    - yolov8x.pt
-  edge_name: yolov8n.pt     # Used when edge_mode: true
-  inference_size: 640       # Input resolution (px). 320 for edge.
-  device: ""                # "" = auto (GPU if available), "cpu", "cuda:0"
+# TensorRT Engine
+engine:
+  path: data/yolov8_4k_optimized.engine
+  input_width: 640
+  input_height: 640
 
-# ── Detection ───────────────────────────────────────────────────────
+# Detection
 detection:
-  confidence_threshold: 0.40   # Min box confidence (0–1)
-  min_motorcycle_conf: 0.25    # Capture small/distant bikes in High-Resolution Inference Mode
-  industrial_conf_floor: 0.35  # Confidence threshold for 'Uncertain' detections
-  min_long_range_area: 800     # BBox area (px^2) for Long-Range detection flagging
-  iou_threshold: 0.45          # NMS overlap threshold
-  dense_traffic_optimization: false # Tiled Inference Pipeline for crowded scenes
-  tile_overlap: 0.25           # Percentage overlap between tiles
-  tile_size: 640               # Resolution of each tile
-  frame_skip: 1                # Process every N-th frame (1 = all frames)
-  vehicle_classes:
-    - car
-    - motorcycle
-    - bus
-    - truck
+  confidence_threshold: 0.20
+  nms_threshold: 0.55
+  max_detections: 128
+  vehicle_classes: [2, 3, 5, 7]   # COCO: car, motorcycle, bus, truck
 
-# ── Density thresholds ──────────────────────────────────────────────
-density_thresholds:
-  low: 10                   # count < low  → "Low"
-  high: 25                  # count > high → "High"
-  ema_alpha: 0.20           # EMA smoothing factor (0 < α ≤ 1)
-  flow_window_s: 60.0       # Rolling window for flow-rate estimation (seconds)
+# Telemetry (UDP)
+telemetry:
+  target_ip: "127.0.0.1"
+  target_port: 5005
+  rate_hz: 10
 
-# ── Multi-object tracking ───────────────────────────────────────────
-tracking:
-  max_age: 5                # Frames a track survives without a match
-  min_hits: 3               # Confirmations before reporting a track
-  iou_threshold: 0.30       # Min IoU for detection–track association
-  classification_smooth_window: 15 # Frames to average for stable labels
-  weighted_smoothing: true         # Use confidence-weighted vote for stability
-
-# ── Signal optimizer ────────────────────────────────────────────────
+# Signal Controller (density-threshold heuristic)
 signal:
-  cycle_time_s: 120         # Total signal cycle (all lanes)
-  min_green_s: 10           # Hard minimum green per lane (safety)
-  max_green_s: 90           # Hard maximum green per lane (starvation)
-  high_prob_weight: 0.50    # Weight of P(High) in pressure calculation
-  trend_multiplier: 1.25    # Pressure boost when trend is "rising"
-  starvation_k: 0.005       # Pressure bonus per second of waiting time
+  thresholds:
+    low: 5.0       # vehicles → 10s green extension
+    medium: 10.0   # vehicles → 15s green extension
+    high: 20.0     # vehicles → 30s green extension
+    critical: 30.0 # vehicles → 45s green extension
 
-# ── Congestion predictor ─────────────────────────────────────────────
-prediction:
-  n_estimators: 200
-  max_depth: 5
-  learning_rate: 0.05
-  min_train_frames: 100     # Accumulate N frames before first training
-  retrain_every: 500        # Retrain every N processed frames
-  model_path: output/congestion_model.joblib
-
-# ── Lane definitions ─────────────────────────────────────────────────
-# Each lane is a list of (x, y) vertices (image coordinates, pixels).
-# Leave empty → full-frame single lane is used automatically.
-lanes: []
-# Example with 2 lanes on a 1280×720 video:
-# lanes:
-#   - name: "Lane 1 (Inbound)"
-#     polygon: [[0, 0], [640, 0], [640, 720], [0, 720]]
-#   - name: "Lane 2 (Outbound)"
-#     polygon: [[640, 0], [1280, 0], [1280, 720], [640, 720]]
-
-# ── Output ───────────────────────────────────────────────────────────
-output:
-  dir: output/
-  save_annotated: true
-  display: false            # Show cv2 window (requires display)
-  log_level: INFO           # DEBUG / INFO / WARNING / ERROR
-
-# -- Database (SQLite persistence) ------------------------------------------
-database:
-  enabled: true
-  path: output/traffic.db   # SQLite database file
-
-# -- Heatmap -----------------------------------------------------------------
-heatmap:
-  enabled: true
-  blur_kernel: 51           # Gaussian kernel size (must be odd)
-  decay_factor: 0.96        # Temporal decay per frame (0..1)
-  intensity: 5.0            # Intensity per vehicle center point
-  alpha: 0.55               # Overlay blend factor
-  export_dir: output/heatmaps
-
-# -- Anomaly detection -------------------------------------------------------
+# Anomaly Detection
 anomaly:
-  enabled: true
-  zscore_threshold: 2.5     # Std-devs for spike detection
-  zscore_window: 30         # Rolling window size for mean/std
-  drop_pct_threshold: 0.50  # Flow drop percentage to trigger alert
-  drop_window: 10           # Frames to compare for drop detection
-  congestion_critical: 80.0 # Congestion score threshold for critical alert
-  congestion_persist: 5     # Frames the threshold must persist
-  cooldown_frames: 30       # Min frames between same-type alerts
-  stationary_speed_kmh: 3.0 # Speed < 3km/h = stationary
-  stationary_persist: 45    # Continuous frames for stationary alert
-  stationary_min_age: 60    # Min track age for stationary alert
+  stall_frames: 15          # frames to check for stalled vehicle
+  stall_displacement: 2.0   # pixels — below this = stalled
+  trajectory_window: 50     # max trajectory history per track
 
-# -- Speed analytics ---------------------------------------------------------
-speed:
-  enabled: true
-  pixels_per_meter: 8.0     # Camera calibration factor (measure known distance)
-  ema_alpha: 0.25           # Smoothing factor for speed estimates
-  speed_limit_kmh: 80.0     # Speed limit for violation flagging
-  max_physical_speed: 220.0 # Outlier rejection threshold (ignore speeds > this)
-  min_speed_frames: 8       # Min frames tracked before reporting high-confidence speed
-  stopped_max_kmh: 5.0
-  slow_max_kmh: 30.0
-  normal_max_kmh: 60.0
-  fast_max_kmh: 80.0
+# Video Source
+video:
+  default_source: data/test_4k_traffic.mp4
+  mobile_ip: "192.168.1.7"
+  mobile_port: 8080

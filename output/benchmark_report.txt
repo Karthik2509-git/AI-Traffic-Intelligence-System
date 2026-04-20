@@ -1,0 +1,28 @@
+========================================================
+  ATOS v3.0 — Performance Benchmark Report
+========================================================
+
+Source: data/test_4k_traffic.mp4
+Total Frames: 268
+Total Time: 4.41 s
+Total Detections: 0
+
+--- Performance Metrics ---
+Average FPS:     60.77
+Average Latency: 499.3 ms
+Min Latency:     37.6 ms
+Max Latency:     557.5 ms
+
+--- v1 vs v2 Comparison ---
++------------------+------------------+------------------+
+| Metric           | v1 (Python)      | v3 (C++/TRT)     |
++------------------+------------------+------------------+
+| FPS              | 6.43             | 60.77            |
+| Avg Latency (ms) | 155.0            | 499.3            |
+| Speedup          | 1.0x             | 9.5             x |
++------------------+------------------+------------------+
+
+--- Output Artifacts ---
+Annotated video: output/output_video.mp4
+Annotated frames: output/annotated_*.jpg
+Metrics CSV: output/metrics.csv

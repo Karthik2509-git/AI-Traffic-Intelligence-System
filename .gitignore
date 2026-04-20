@@ -1,28 +1,34 @@
-# Industrial Consolidation Policy
-bin/
-legacy/
+# Build artifacts
 *.obj
-*.exe
-build_log.txt
+*.pdb
+*.ilk
+*.exp
+*.lib
+build/
+bin/*.exe
 
-# Environment & Cache
-venv/
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
-output/
-*.log
-.env
+*.pyo
+venv/
+legacy/venv/
+*.egg-info/
+dist/
 
-# Model weights (large binaries - manage via LFS or external data store)
-*.pt
-*.onnx
-*.engine
-*.joblib
+# Output
+output/*.jpg
+output/*.mp4
+output/*.png
+output/*.log
+output/*.db
 
-# IDE & OS
-.vscode/
-.idea/
-*.swp
-.DS_Store
+# OS
 Thumbs.db
+.DS_Store

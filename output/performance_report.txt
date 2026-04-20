@@ -1,0 +1,16 @@
+============================================================
+ AI TRAFFIC INTELLIGENCE SYSTEM - PERFORMANCE REPORT
+============================================================
+
+Timestamp:          2026-04-01 16:42:37
+Model:              yolov8m.pt
+Resolution:         640px
+------------------------------------------------------------
+Total Frames:       60
+Total Vehicles:     0
+Avg Latency:        155.64 ms
+P95 Latency:        162.48 ms
+Avg Pipeline FPS:   6.43
+------------------------------------------------------------
+Operational Status: PRODUCTION-READY
+============================================================

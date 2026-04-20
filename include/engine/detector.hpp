@@ -32,10 +32,11 @@ class Detector {
 public:
     struct Config {
         std::string engine_path;
-        int input_w = 640;
-        int input_h = 640;
-        float conf_threshold = 0.45f;
-        float nms_threshold = 0.50f;
+        int input_w = 960;
+        int input_h = 960;
+        float conf_threshold = 0.20f;
+        float nms_threshold = 0.55f;
+        int num_anchors = 18900; // Updated for 960x960
     };
 
     Detector(const Config& config);
