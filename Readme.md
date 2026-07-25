@@ -1,67 +1,5 @@
 <p align="center">
-  <svg width="820" height="280" viewBox="0 0 820 280" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <!-- Deep Obsidian Dark Background -->
-    <rect width="820" height="280" rx="16" fill="url(#atosBgGrad)" />
-    <rect width="820" height="280" rx="16" stroke="#2a1f4d" stroke-width="2.5" />
-
-    <!-- Grid / Neural Circuit Overlay -->
-    <g opacity="0.15">
-      <path d="M 0 35 L 820 35 M 0 70 L 820 70 M 0 105 L 820 105 M 0 140 L 820 140 M 0 175 L 820 175 M 0 210 L 820 210 M 0 245 L 820 245" stroke="#9d4edd" stroke-width="0.5" />
-      <path d="M 50 0 L 50 280 M 100 0 L 100 280 M 150 0 L 150 280 M 200 0 L 200 280 M 250 0 L 250 280 M 300 0 L 300 280 M 350 0 L 350 280 M 400 0 L 400 280 M 450 0 L 450 280 M 500 0 L 500 280 M 550 0 L 550 280 M 600 0 L 600 280 M 650 0 L 650 280 M 700 0 L 700 280 M 750 0 L 750 280" stroke="#00e5ff" stroke-width="0.5" />
-    </g>
-
-    <!-- Stylized Smart City Skyline (Silhouette) -->
-    <path d="M 450 160 L 470 160 L 470 100 L 490 80 L 510 100 L 510 160 L 530 160 L 530 120 L 560 120 L 560 160 L 580 160 L 580 70 L 600 50 L 610 70 L 610 160 L 630 160 L 630 130 L 650 130 L 650 160 L 670 160 L 670 90 L 700 90 L 700 160 L 720 160 L 720 110 L 750 110 L 750 160 Z" fill="#140f2d" opacity="0.75" />
-    
-    <!-- Neon Sky Glow lines -->
-    <path d="M 450 160 L 470 160 L 470 100 L 490 80 L 510 100 L 510 160 L 530 160" stroke="#bd00ff" stroke-width="1.5" opacity="0.3" fill="none" />
-    <path d="M 580 160 L 580 70 L 600 50 L 610 70 L 610 160" stroke="#00e5ff" stroke-width="1.5" opacity="0.3" fill="none" />
-
-    <!-- Schematic Highway Perspective -->
-    <path d="M 400 160 L 400 280" stroke="#3d306b" stroke-width="1.5" stroke-dasharray="10 8" />
-    <path d="M 320 160 L 100 280" stroke="#00e5ff" stroke-width="2.5" opacity="0.6" />
-    <path d="M 480 160 L 700 280" stroke="#bd00ff" stroke-width="2.5" opacity="0.6" />
-
-    <!-- AI Bounding Boxes Mockup -->
-    <!-- Car 1 (Neon Blue Bounding Box) -->
-    <rect x="180" y="180" width="130" height="75" rx="6" fill="none" stroke="#00e5ff" stroke-width="2.5" filter="url(#atosCyanGlow)" />
-    <rect x="180" y="160" width="75" height="20" rx="3" fill="#00e5ff" />
-    <text x="185" y="174" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#0c0721">car: 0.99</text>
-    <path d="M 245 220 L 295 220" stroke="#00e5ff" stroke-width="1.5" stroke-dasharray="3 3" />
-    <polygon points="295,217 302,220 295,223" fill="#00e5ff" />
-    <text x="250" y="214" font-family="'Segoe UI', Roboto, sans-serif" font-size="8.5" font-weight="bold" fill="#00e5ff">68 km/h</text>
-
-    <!-- Truck 2 (Neon Purple Bounding Box) -->
-    <rect x="520" y="170" width="160" height="90" rx="6" fill="none" stroke="#bd00ff" stroke-width="2.5" filter="url(#atosPurpleGlow)" />
-    <rect x="520" y="150" width="85" height="20" rx="3" fill="#bd00ff" />
-    <text x="525" y="164" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">truck: 0.96</text>
-
-    <!-- GPU Circuit Pathways -->
-    <path d="M 50 140 L 150 140 L 190 180" stroke="url(#atosCudaPathGrad)" stroke-width="2" stroke-linecap="round" fill="none" />
-    <circle cx="190" cy="180" r="4" fill="#00e5ff" filter="url(#atosCyanGlow)" />
-    <path d="M 770 140 L 670 140 L 630 100" stroke="url(#atosCudaPathGradReverse)" stroke-width="2" stroke-linecap="round" fill="none" />
-    <circle cx="630" cy="100" r="4" fill="#bd00ff" filter="url(#atosPurpleGlow)" />
-
-    <!-- Focal Frame Corners -->
-    <path d="M 30 25 L 55 25 M 30 25 L 30 50 M 790 25 L 765 25 M 790 25 L 790 50 M 30 255 L 55 255 M 30 255 L 30 230 M 790 255 L 765 255 M 790 255 L 790 230" stroke="#483c7a" stroke-width="2.5" />
-
-    <!-- Typography: Title & Subtitle -->
-    <text x="60" y="90" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="44" font-weight="900" fill="#ffffff" letter-spacing="1.5">ATOS v2.0</text>
-    <text x="60" y="120" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#00e5ff" letter-spacing="4">AI TRAFFIC INTELLIGENCE SYSTEM</text>
-    <text x="60" y="145" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="500" fill="#a49cc2" letter-spacing="0.5">Real-Time C++/CUDA/TensorRT Traffic Observation Platform</text>
-
-    <!-- Embedded Hardware Acceleration Badges -->
-    <g transform="translate(60, 175)">
-      <rect width="85" height="22" rx="4" fill="#201547" stroke="#36296b" />
-      <text x="12" y="15" font-family="'Segoe UI', sans-serif" font-size="9" font-weight="bold" fill="#00e5ff">TENSORRT</text>
-      
-      <rect x="95" width="80" height="22" rx="4" fill="#201547" stroke="#36296b" />
-      <text x="109" y="15" font-family="'Segoe UI', sans-serif" font-size="9" font-weight="bold" fill="#b070ff">CUDA-C++</text>
-      
-      <rect x="185" width="75" height="22" rx="4" fill="#201547" stroke="#36296b" />
-      <text x="199" y="15" font-family="'Segoe UI', sans-serif" font-size="9" font-weight="bold" fill="#00ffb7">YOLOv8</text>
-    </g>
-  </svg>
+  <img src="docs/banner.svg" alt="ATOS v2.0 Banner" width="100%">
 </p>
 
 ---
@@ -81,6 +19,20 @@
 
 ---
 
+## 📖 Hero Section
+
+**ATOS v2.0 (AI Traffic Observation System)** is an industrial-grade, highly optimized real-time intelligent traffic monitoring and urban observation platform. Built entirely in C++ and CUDA, the system bypasses the performance limitations of traditional Python runtime loops to process high-resolution multi-stream video feeds. 
+
+ATOS merges a serialized **NVIDIA TensorRT YOLOv8 inference engine** with custom-written **CUDA preprocessing kernels** to enable edge-based object detection, traffic density computation, lane occupancy analysis, adaptive signal timing, and accident/anomaly detection. High-frequency traffic metrics are formatted into optimized JSON telemetry payloads and streamed over UDP sockets to smart city digital twin targets, while a legacy Python database component logs long-term statistics in SQLite.
+
+---
+
+> [!NOTE]
+> **AI Image Generation Prompt (for creating promotional assets):**
+> *`A ultra-sleek, professional GitHub repository header banner for "ATOS v2.0: AI Traffic Observation System". Dark futuristic mode, cybertech theme, grid backdrop, wireframe road networks, bounding boxes in neon cyan and fluorescent green wrapping around high-speed vehicles. Subtly overlays of neural network nodes, CUDA threads, and TensorRT optimization curves. Deep obsidian, carbon fiber, and space grey tones, high contrast, clean minimalist computer vision aesthetics, 8k resolution, cinematic lighting, tech visualization vector style.`*
+
+---
+
 ## 🗺️ Table of Contents
 
 1. [📖 Project Overview](#-project-overview)
@@ -93,20 +45,17 @@
 8. [🚀 Installation Guide](#-installation-guide)
 9. [🛠️ Configuration Reference](#%EF%B8%8F-configuration-reference)
 10. [📊 Performance Benchmarks](#-performance-benchmarks)
-11. [📷 Screen & Demo Gallery](#-screen--demo-gallery)
-12. [📈 Production Results](#-production-results)
-13. [🗺️ Future Roadmap](#%EF%B8%8F-future-roadmap)
-14. [🤝 Contributing](#-contributing)
-15. [⚖️ License](#-license)
-16. [💖 Acknowledgements](#-acknowledgements)
+11. [📈 Production Results](#-production-results)
+12. [🗺️ Future Roadmap](#%EF%B8%8F-future-roadmap)
+13. [🤝 Contributing](#-contributing)
+14. [⚖️ License](#-license)
+15. [💖 Acknowledgements](#-acknowledgements)
 
 ---
 
 ## 📖 Project Overview
 
-**ATOS v2.0 (AI Traffic Intelligence System)** is a production-oriented, real-time intelligent traffic monitoring and urban observation platform. Built entirely in C++ and CUDA, the system bypasses the performance limitations of traditional Python runtime loops to process high-resolution multi-stream video feeds. 
-
-ATOS merges a serialized **NVIDIA TensorRT YOLOv8 inference engine** with custom-written **CUDA preprocessing kernels** to enable edge-based object detection, traffic density computation, lane occupancy analysis, adaptive signal timing, and accident/anomaly detection. High-frequency traffic metrics are formatted into optimized JSON telemetry packets and streamed over UDP sockets to smart city digital twin targets, while a legacy Python database component logs long-term statistics in SQLite.
+ATOS v2.0 is a modular edge AI traffic intelligence platform capable of processing live traffic streams with hardware-level acceleration. By combining specialized C++ orchestration, custom CUDA-C preprocessing kernels, and highly optimized TensorRT execution routines, the platform implements a complete computer vision pipeline capable of detecting vehicles, mapping queue lengths, regulating intersection signals, and notifying network controllers of accident conditions.
 
 ---
 
@@ -391,24 +340,6 @@ The benchmarks below compare execution performance across different platforms.
 - **Total Pipeline Latency**: `6.62 ms` (average).
 - **CPU Resource Utilization**: `< 12%` (due to offloaded preprocessing operations).
 - **GPU Resource Utilization**: `~74%` during active multi-stream processing.
-
----
-
-## 📷 Screen & Demo Gallery
-
-### Real-Time Detection and Tracking Overlay
-<p align="center">
-  <img src="https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&q=80&w=800" alt="Inference Pipeline Detection" width="80%"/>
-  <br>
-  <em>Figure 2: Real-time YOLOv8 TensorRT inference with speed estimation and lane overlays.</em>
-</p>
-
-### Streamlit Digital Twin Dashboard
-<p align="center">
-  <img src="https://images.unsplash.com/photo-1573164713988-8665fc963095?auto=format&fit=crop&q=80&w=800" alt="Streamlit Traffic Analytics Dashboard" width="80%"/>
-  <br>
-  <em>Figure 3: Dashboard interface displaying real-time vehicle flow, velocity distributions, and active alert systems.</em>
-</p>
 
 ---
 
