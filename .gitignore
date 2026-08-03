@@ -7,6 +7,12 @@
 build/
 bin/*.exe
 
+# Models (Keep local, exclude from Git)
+*.pt
+*.onnx
+*.engine
+models/
+
 # IDE
 .vs/
 .vscode/
@@ -22,12 +28,10 @@ legacy/venv/
 *.egg-info/
 dist/
 
-# Output
-output/*.jpg
-output/*.mp4
-output/*.png
-output/*.log
-output/*.db
+# Data & Output
+data/
+output/
+runs/
 
 # OS
 Thumbs.db
