@@ -14,10 +14,14 @@ import { HealthDashboard } from './components/HealthDashboard';
 import { ReplaySystem } from './components/ReplaySystem';
 import { LogViewer } from './components/LogViewer';
 import { BrowserCamModal } from './components/BrowserCamModal';
+import { AddCameraModal } from './components/AddCameraModal';
+import { MobileCamNode } from './components/MobileCamNode';
 
 export function App() {
+  const [isMobileRoute, setIsMobileRoute] = React.useState<boolean>(false);
   const [activeTab, setActiveTab] = React.useState<ActiveTab>('grid');
   const [userRole, setUserRole] = React.useState<UserRole>('Administrator');
+  const [isAddCamModalOpen, setIsAddCamModalOpen] = React.useState<boolean>(false);
   const [isBrowserCamOpen, setIsBrowserCamOpen] = React.useState<boolean>(false);
   const [browserStream, setBrowserStream] = React.useState<MediaStream | null>(null);
 
@@ -56,6 +60,13 @@ export function App() {
     { id: 'cam-4', name: 'West Commercial Zone', location: 'Retail Center Blvd.', status: 'waiting_for_engine', fps: 0.0, latency_ms: 0.0, vehiclesCount: 0, type: 'ONVIF', url: 'rtsp://192.168.1.104/stream' },
   ]);
 
+  // Check path for /mobile route
+  React.useEffect(() => {
+    if (window.location.pathname.startsWith('/mobile') || window.location.search.includes('session=')) {
+      setIsMobileRoute(true);
+    }
+  }, []);
+
   // Real WebSocket & REST Telemetry Connection Loop
   React.useEffect(() => {
     let ws: WebSocket | null = null;
@@ -81,7 +92,7 @@ export function App() {
           setTimeout(connectWebSocket, 3000);
         };
       } catch (err) {
-        console.log('WS Connection error, falling back to HTTP poll');
+        console.log('WS Connection error');
       }
     };
 
@@ -111,7 +122,7 @@ export function App() {
     setBrowserStream(stream);
     const newCam: CameraNode = {
       id: 'cam-browser',
-      name: 'Mobile Browser Node (Live)',
+      name: 'Local Browser Webcam (Live)',
       location: 'Browser Camera Node',
       status: 'online',
       fps: 30.0,
@@ -122,6 +133,21 @@ export function App() {
       isBrowserCam: true
     };
     setCameras((prev) => [newCam, ...prev]);
+  };
+
+  const handleConnectCustomCam = (name: string, type: string, url: string) => {
+    const newCam: CameraNode = {
+      id: `cam-${Date.now()}`,
+      name: name,
+      location: 'Custom Camera Node',
+      status: 'online',
+      fps: 30.0,
+      latency_ms: 10.0,
+      vehiclesCount: 0,
+      type: type as any,
+      url: url
+    };
+    setCameras((prev) => [...prev, newCam]);
   };
 
   const refreshEngineMetrics = async () => {
@@ -136,6 +162,11 @@ export function App() {
     }
   };
 
+  // Render Mobile Transmitter Page directly if on /mobile route
+  if (isMobileRoute) {
+    return <MobileCamNode />;
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-dark)' }}>
       {/* Top Navbar */}
@@ -144,7 +175,7 @@ export function App() {
         engineStatus={engineStatus}
         userRole={userRole}
         setUserRole={setUserRole}
-        onOpenMobileCam={() => setIsBrowserCamOpen(true)}
+        onOpenAddCameraModal={() => setIsAddCamModalOpen(true)}
       />
 
       {/* Main App Layout */}
@@ -163,7 +194,7 @@ export function App() {
               cameras={cameras}
               telemetry={telemetry}
               engineStatus={engineStatus}
-              onOpenMobileCam={() => setIsBrowserCamOpen(true)}
+              onOpenMobileCam={() => setIsAddCamModalOpen(true)}
               browserStream={browserStream}
             />
           )}
@@ -210,7 +241,15 @@ export function App() {
         </main>
       </div>
 
-      {/* Mobile/Browser Camera Pairing Modal */}
+      {/* Add Camera Modal with QR Code pairing */}
+      <AddCameraModal
+        isOpen={isAddCamModalOpen}
+        onClose={() => setIsAddCamModalOpen(false)}
+        onConnectBrowserCam={() => setIsBrowserCamOpen(true)}
+        onConnectCustomCam={handleConnectCustomCam}
+      />
+
+      {/* Browser Webcam Camera Pairing Modal */}
       <BrowserCamModal
         isOpen={isBrowserCamOpen}
         onClose={() => setIsBrowserCamOpen(false)}

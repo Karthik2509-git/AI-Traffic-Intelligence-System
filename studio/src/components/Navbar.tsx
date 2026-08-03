@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, Zap, Wifi, Smartphone, Shield, Bell } from 'lucide-react';
+import { Cpu, Zap, Wifi, Shield, Bell, Plus } from 'lucide-react';
 import type { TelemetryData, UserRole } from '../types';
 
 interface NavbarProps {
@@ -7,7 +7,7 @@ interface NavbarProps {
   engineStatus: string;
   userRole: UserRole;
   setUserRole: (role: UserRole) => void;
-  onOpenMobileCam: () => void;
+  onOpenAddCameraModal: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -15,7 +15,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   engineStatus,
   userRole,
   setUserRole,
-  onOpenMobileCam
+  onOpenAddCameraModal
 }) => {
   const [timeStr, setTimeStr] = React.useState<string>('');
   const [showNotifs, setShowNotifs] = React.useState<boolean>(false);
@@ -117,12 +117,12 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         <button 
-          onClick={onOpenMobileCam}
+          onClick={onOpenAddCameraModal}
           className="btn-primary"
           style={{ fontSize: '0.8rem', padding: '6px 12px' }}
         >
-          <Smartphone size={14} />
-          Connect Mobile Cam
+          <Plus size={14} />
+          Add Camera
         </button>
 
         {/* Notifications Tray */}
