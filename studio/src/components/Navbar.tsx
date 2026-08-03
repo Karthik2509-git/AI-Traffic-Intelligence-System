@@ -1,13 +1,22 @@
 import React from 'react';
-import { Camera, Cpu, Zap, Wifi, Smartphone } from 'lucide-react';
-import type { TelemetryData } from '../types';
+import { Cpu, Zap, Wifi, Smartphone, Shield } from 'lucide-react';
+import type { TelemetryData, UserRole } from '../types';
 
 interface NavbarProps {
   telemetry: TelemetryData;
+  engineStatus: string;
+  userRole: UserRole;
+  setUserRole: (role: UserRole) => void;
   onOpenMobileCam: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ telemetry, onOpenMobileCam }) => {
+export const Navbar: React.FC<NavbarProps> = ({
+  telemetry,
+  engineStatus,
+  userRole,
+  setUserRole,
+  onOpenMobileCam
+}) => {
   const [timeStr, setTimeStr] = React.useState<string>('');
 
   React.useEffect(() => {
@@ -17,6 +26,8 @@ export const Navbar: React.FC<NavbarProps> = ({ telemetry, onOpenMobileCam }) =>
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const isOnline = engineStatus === 'online';
 
   return (
     <header style={{
@@ -49,28 +60,35 @@ export const Navbar: React.FC<NavbarProps> = ({ telemetry, onOpenMobileCam }) =>
           </span>
         </div>
 
-        <div className="badge badge-cyan">
-          C++ ENGINE v3.1
+        <div className={isOnline ? "badge badge-green" : "badge badge-orange"} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: isOnline ? 'var(--accent-green)' : 'var(--accent-orange)',
+            boxShadow: isOnline ? '0 0 8px var(--accent-green)' : 'none'
+          }}></span>
+          {isOnline ? 'C++ ENGINE ONLINE' : 'WAITING FOR ENGINE'}
         </div>
-        <div className="badge badge-green">
+
+        <div className="badge badge-cyan">
           CUDA 12.4 • TensorRT 10
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', fontSize: '0.82rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '20px', fontSize: '0.82rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-dim)' }}>
-          <Wifi size={14} color="var(--accent-green)" />
-          <span>FPS: <strong style={{ color: 'var(--accent-cyan)' }}>{telemetry.fps.toFixed(1)}</strong></span>
+          <Wifi size={14} color={isOnline ? "var(--accent-green)" : "var(--text-muted)"} />
+          <span>FPS: <strong style={{ color: isOnline ? 'var(--accent-cyan)' : 'var(--text-muted)' }}>
+            {isOnline ? telemetry.fps.toFixed(1) : 'Waiting'}
+          </strong></span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-dim)' }}>
-          <Zap size={14} color="var(--accent-orange)" />
-          <span>Latency: <strong style={{ color: 'var(--accent-orange)' }}>{telemetry.latency_ms.toFixed(1)} ms</strong></span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-dim)' }}>
-          <Camera size={14} color="var(--accent-cyan)" />
-          <span>Active Nodes: <strong style={{ color: '#fff' }}>{telemetry.active_cameras}</strong></span>
+          <Zap size={14} color={isOnline ? "var(--accent-orange)" : "var(--text-muted)"} />
+          <span>Latency: <strong style={{ color: isOnline ? 'var(--accent-orange)' : 'var(--text-muted)' }}>
+            {isOnline ? `${telemetry.latency_ms.toFixed(1)} ms` : '--'}
+          </strong></span>
         </div>
 
         <button 
@@ -81,6 +99,27 @@ export const Navbar: React.FC<NavbarProps> = ({ telemetry, onOpenMobileCam }) =>
           <Smartphone size={14} />
           Connect Mobile Cam
         </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#111726', padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-dim)' }}>
+          <Shield size={14} color="var(--accent-cyan)" />
+          <select
+            value={userRole}
+            onChange={(e) => setUserRole(e.target.value as UserRole)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#fff',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              outline: 'none'
+            }}
+          >
+            <option value="Guest" style={{ background: '#0a0d16' }}>Role: Guest</option>
+            <option value="Developer" style={{ background: '#0a0d16' }}>Role: Developer</option>
+            <option value="Administrator" style={{ background: '#0a0d16' }}>Role: Admin</option>
+          </select>
+        </div>
 
         <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
           {timeStr || '00:00:00'}

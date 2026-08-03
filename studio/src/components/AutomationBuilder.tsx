@@ -1,19 +1,82 @@
 import React from 'react';
-import { Zap, Plus, Play, ArrowRight } from 'lucide-react';
-import type { WorkflowNode } from '../types';
+import { 
+  ReactFlow, 
+  Controls, 
+  Background, 
+  applyNodeChanges, 
+  applyEdgeChanges, 
+  addEdge,
+  type Node, 
+  type Edge, 
+  type OnNodesChange, 
+  type OnEdgesChange, 
+  type OnConnect 
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Zap, Play } from 'lucide-react';
+
+const initialNodes: Node[] = [
+  {
+    id: 'node-1',
+    type: 'input',
+    data: { label: '📹 Camera Stream (RTSP / USB)' },
+    position: { x: 50, y: 150 },
+    style: { background: '#0e1320', color: '#fff', border: '1px solid #00f2fe', borderRadius: '8px', padding: '12px' }
+  },
+  {
+    id: 'node-2',
+    data: { label: '⚡ TensorRT YOLOv8 (FP16 Engine)' },
+    position: { x: 300, y: 150 },
+    style: { background: '#0e1320', color: '#fff', border: '1px solid #a855f7', borderRadius: '8px', padding: '12px' }
+  },
+  {
+    id: 'node-3',
+    data: { label: '🔍 Filter: Class = Truck OR Bus' },
+    position: { x: 580, y: 80 },
+    style: { background: '#0e1320', color: '#fff', border: '1px solid #ff9f43', borderRadius: '8px', padding: '12px' }
+  },
+  {
+    id: 'node-4',
+    data: { label: '🚦 Condition: Density > 80%' },
+    position: { x: 580, y: 220 },
+    style: { background: '#0e1320', color: '#fff', border: '1px solid #f59e0b', borderRadius: '8px', padding: '12px' }
+  },
+  {
+    id: 'node-5',
+    type: 'output',
+    data: { label: '📢 Telegram Dispatcher Alert' },
+    position: { x: 860, y: 150 },
+    style: { background: '#0e1320', color: '#fff', border: '1px solid #00ff9d', borderRadius: '8px', padding: '12px' }
+  },
+];
+
+const initialEdges: Edge[] = [
+  { id: 'e1-2', source: 'node-1', target: 'node-2', animated: true, style: { stroke: '#00f2fe' } },
+  { id: 'e2-3', source: 'node-2', target: 'node-3', animated: true, style: { stroke: '#a855f7' } },
+  { id: 'e2-4', source: 'node-2', target: 'node-4', animated: true, style: { stroke: '#a855f7' } },
+  { id: 'e3-5', source: 'node-3', target: 'node-5', animated: true, style: { stroke: '#00ff9d' } },
+  { id: 'e4-5', source: 'node-4', target: 'node-5', animated: true, style: { stroke: '#00ff9d' } },
+];
 
 export const AutomationBuilder: React.FC = () => {
-  const [nodes] = React.useState<WorkflowNode[]>([
-    { id: '1', type: 'trigger', title: 'Camera Stream Input', subtitle: 'Intersection-Alpha (RTSP)', icon: 'camera' },
-    { id: '2', type: 'model', title: 'TensorRT YOLOv8 Engine', subtitle: 'FP16 Detection Model', icon: 'cpu' },
-    { id: '3', type: 'filter', title: 'Class Filter', subtitle: 'Class = Truck OR Bus', icon: 'filter' },
-    { id: '4', type: 'condition', title: 'Density Check', subtitle: 'Queue Pressure > 80%', icon: 'activity' },
-    { id: '5', type: 'action', title: 'Telegram Dispatcher', subtitle: 'Broadcast Incident Alert', icon: 'send' },
-  ]);
-
+  const [nodes, setNodes] = React.useState<Node[]>(initialNodes);
+  const [edges, setEdges] = React.useState<Edge[]>(initialEdges);
   const [executing, setExecuting] = React.useState<boolean>(false);
 
-  const runWorkflow = () => {
+  const onNodesChange: OnNodesChange = React.useCallback(
+    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    [],
+  );
+  const onEdgesChange: OnEdgesChange = React.useCallback(
+    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [],
+  );
+  const onConnect: OnConnect = React.useCallback(
+    (params) => setEdges((eds) => addEdge(params, eds)),
+    [],
+  );
+
+  const handleTestRun = () => {
     setExecuting(true);
     setTimeout(() => setExecuting(false), 2000);
   };
@@ -24,74 +87,32 @@ export const AutomationBuilder: React.FC = () => {
         <div>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Zap color="var(--accent-cyan)" />
-            WORKFLOW AUTOMATION ENGINE (n8n Style)
+            REACT FLOW AUTOMATION BUILDER (n8n Style)
           </h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Visual drag-and-drop workflow automation connecting AI detections to instant webhooks & alerts
+            Interactive node-based visual workflow editor connecting AI detections to webhooks, Telegram, & signal controllers
           </p>
         </div>
 
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button className="btn-secondary">
-            <Plus size={14} /> + Add Node
-          </button>
-          <button className="btn-primary" onClick={runWorkflow}>
-            <Play size={14} /> {executing ? 'Executing Pipeline...' : 'Test Run Workflow'}
+          <button className="btn-primary" onClick={handleTestRun}>
+            <Play size={14} /> {executing ? 'Executing Flow...' : 'Test Run Workflow'}
           </button>
         </div>
       </div>
 
-      <div className="glass-panel" style={{
-        padding: '30px',
-        flex: 1,
-        minHeight: '400px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'radial-gradient(circle at center, #0e1320 0%, #07090e 100%)',
-        position: 'relative',
-        overflowX: 'auto'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '30px' }}>
-          {nodes.map((node, index) => (
-            <React.Fragment key={node.id}>
-              <div
-                className="glass-panel-interactive"
-                style={{
-                  width: '220px',
-                  padding: '16px',
-                  borderLeft: '4px solid ' + (
-                    node.type === 'trigger' ? 'var(--accent-cyan)' :
-                    node.type === 'model' ? 'var(--accent-purple)' :
-                    node.type === 'filter' ? 'var(--accent-orange)' :
-                    node.type === 'condition' ? '#f59e0b' : 'var(--accent-green)'
-                  )
-                }}
-              >
-                <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>
-                  {node.type}
-                </div>
-                <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#fff', marginBottom: '4px' }}>
-                  {node.title}
-                </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  {node.subtitle}
-                </div>
-
-                <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.7rem' }}>
-                  <span className="badge badge-cyan">ACTIVE</span>
-                  <span style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>0.2ms</span>
-                </div>
-              </div>
-
-              {index < nodes.length - 1 && (
-                <div style={{ display: 'flex', alignItems: 'center', color: 'var(--accent-cyan)' }}>
-                  <ArrowRight size={24} />
-                </div>
-              )}
-            </React.Fragment>
-          ))}
-        </div>
+      <div className="glass-panel" style={{ flex: 1, minHeight: '480px', borderRadius: '12px', overflow: 'hidden' }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          fitView
+        >
+          <Background color="#1e2638" gap={20} />
+          <Controls style={{ background: '#0a0d16', color: '#fff', border: '1px solid #1e2638' }} />
+        </ReactFlow>
       </div>
     </div>
   );

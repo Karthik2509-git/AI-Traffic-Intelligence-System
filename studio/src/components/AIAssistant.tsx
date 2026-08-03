@@ -4,13 +4,18 @@ import { Bot, Send, Calculator } from 'lucide-react';
 
 interface AIAssistantProps {
   telemetry: TelemetryData;
+  engineStatus: string;
 }
 
-export const AIAssistant: React.FC<AIAssistantProps> = ({ telemetry }) => {
+export const AIAssistant: React.FC<AIAssistantProps> = ({ telemetry, engineStatus }) => {
+  const isOnline = engineStatus === 'online';
+
   const [messages, setMessages] = React.useState<{ role: 'user' | 'assistant'; text: string; formula?: string }[]>([
     {
       role: 'assistant',
-      text: 'Hello! I am your Explainable AI Assistant for ATOS Studio. Ask me anything about intersection traffic density, formulas, incident alerts, or model predictions.',
+      text: isOnline 
+        ? 'Hello! I am your Explainable AI Assistant for ATOS Studio. Ask me anything about intersection traffic density, formulas, incident alerts, or model predictions.'
+        : 'Hello! C++ Engine Telemetry is currently offline or waiting for stream. Connect the backend engine to calculate live traffic pressure and signal extensions.',
     }
   ]);
   const [input, setInput] = React.useState('');
@@ -34,7 +39,9 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ telemetry }) => {
       let reply = "Based on live telemetry from the C++ ATOS Engine:";
       let formulaStr: string | undefined;
 
-      if (q.toLowerCase().includes('pressure') || q.toLowerCase().includes('formula')) {
+      if (!isOnline) {
+        reply = "C++ Engine Disconnected: Unable to fetch live telemetry values. Please launch `atos_traffic_system.exe` or UDP gateway stream.";
+      } else if (q.toLowerCase().includes('pressure') || q.toLowerCase().includes('formula')) {
         reply = `Traffic Pressure Index is calculated continuously in C++ using normalized vehicle density against intersection design capacity:`;
         formulaStr = `P = min( ActiveTracks / IntersectionCapacity, 1.0 )\nCurrently: P = min( ${telemetry.vehicles} / 200, 1.0 ) = ${telemetry.pressure.toFixed(2)}`;
       } else if (q.toLowerCase().includes('congested') || q.toLowerCase().includes('alpha')) {
@@ -62,7 +69,9 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ telemetry }) => {
           </p>
         </div>
 
-        <span className="badge badge-purple">Qdrant Vector DB Ready</span>
+        <span className={isOnline ? "badge badge-purple" : "badge badge-orange"}>
+          {isOnline ? "Engine Online" : "Engine Offline"}
+        </span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px', flex: 1 }}>

@@ -1,10 +1,11 @@
 import React from 'react';
 import type { CameraNode, TelemetryData } from '../types';
-import { Video } from 'lucide-react';
+import { Video, AlertTriangle } from 'lucide-react';
 
 interface CameraGridProps {
   cameras: CameraNode[];
   telemetry: TelemetryData;
+  engineStatus: string;
   onOpenMobileCam: () => void;
   browserStream: MediaStream | null;
 }
@@ -12,6 +13,7 @@ interface CameraGridProps {
 export const CameraGrid: React.FC<CameraGridProps> = ({
   cameras,
   telemetry,
+  engineStatus,
   onOpenMobileCam,
   browserStream
 }) => {
@@ -24,10 +26,12 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
     }
   }, [browserStream]);
 
+  const isOnline = engineStatus === 'online';
   const displayedCameras = cameras.slice(0, gridSize);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
+      {/* Grid Controls Bar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -70,6 +74,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
         </div>
       </div>
 
+      {/* Video Grid Canvas */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: gridSize === 1 ? '1fr' : gridSize === 2 ? '1fr 1fr' : 'repeat(auto-fit, minmax(360px, 1fr))',
@@ -92,6 +97,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
               border: '1px solid var(--border-dim)'
             }}
           >
+            {/* Top Overlay HUD */}
             <div style={{
               position: 'absolute',
               top: '12px',
@@ -118,7 +124,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  background: cam.status === 'online' ? 'var(--accent-green)' : 'var(--accent-orange)'
+                  background: isOnline ? 'var(--accent-green)' : 'var(--accent-orange)'
                 }}></span>
                 <span style={{ fontWeight: 700, color: '#fff' }}>{cam.name}</span>
                 <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>({cam.type})</span>
@@ -132,12 +138,13 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
                 border: '1px solid var(--border-dim)',
                 fontSize: '0.75rem',
                 fontFamily: 'var(--font-mono)',
-                color: 'var(--accent-cyan)'
+                color: isOnline ? 'var(--accent-cyan)' : 'var(--text-muted)'
               }}>
-                {cam.fps.toFixed(1)} FPS • {cam.latencyMs.toFixed(1)}ms
+                {isOnline ? `${cam.fps.toFixed(1)} FPS • ${cam.latency_ms.toFixed(1)}ms` : 'Waiting'}
               </div>
             </div>
 
+            {/* Video Content / Stream Display */}
             {cam.isBrowserCam && browserStream ? (
               <video
                 ref={videoRef}
@@ -157,42 +164,54 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
                 background: 'radial-gradient(circle at center, #111728 0%, #07090e 100%)',
                 position: 'relative'
               }}>
-                <div style={{
-                  position: 'absolute',
-                  top: '30%',
-                  left: '25%',
-                  width: '120px',
-                  height: '80px',
-                  border: '2px solid var(--accent-green)',
-                  borderRadius: '4px',
-                  boxShadow: '0 0 10px rgba(0,255,157,0.3)',
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  padding: '2px 4px'
-                }}>
-                  <span style={{ background: 'var(--accent-green)', color: '#000', fontSize: '0.65rem', fontWeight: 800, padding: '1px 4px' }}>
-                    car 0.94
-                  </span>
-                </div>
+                {isOnline ? (
+                  <>
+                    {/* Active Engine Bounding Boxes */}
+                    <div style={{
+                      position: 'absolute',
+                      top: '30%',
+                      left: '25%',
+                      width: '120px',
+                      height: '80px',
+                      border: '2px solid var(--accent-green)',
+                      borderRadius: '4px',
+                      boxShadow: '0 0 10px rgba(0,255,157,0.3)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      padding: '2px 4px'
+                    }}>
+                      <span style={{ background: 'var(--accent-green)', color: '#000', fontSize: '0.65rem', fontWeight: 800, padding: '1px 4px' }}>
+                        car 0.94
+                      </span>
+                    </div>
 
-                <div style={{
-                  position: 'absolute',
-                  top: '50%',
-                  right: '20%',
-                  width: '160px',
-                  height: '100px',
-                  border: '2px solid var(--accent-orange)',
-                  borderRadius: '4px',
-                  boxShadow: '0 0 10px rgba(255,159,67,0.3)',
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  padding: '2px 4px'
-                }}>
-                  <span style={{ background: 'var(--accent-orange)', color: '#000', fontSize: '0.65rem', fontWeight: 800, padding: '1px 4px' }}>
-                    bus 0.88
-                  </span>
-                </div>
+                    <div style={{
+                      position: 'absolute',
+                      top: '50%',
+                      right: '20%',
+                      width: '160px',
+                      height: '100px',
+                      border: '2px solid var(--accent-orange)',
+                      borderRadius: '4px',
+                      boxShadow: '0 0 10px rgba(255,159,67,0.3)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      padding: '2px 4px'
+                    }}>
+                      <span style={{ background: 'var(--accent-orange)', color: '#000', fontSize: '0.65rem', fontWeight: 800, padding: '1px 4px' }}>
+                        bus 0.88
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
+                    <AlertTriangle size={32} color="var(--accent-orange)" style={{ marginBottom: '8px' }} />
+                    <div style={{ fontSize: '0.9rem', color: '#fff', fontWeight: 600 }}>Waiting for Engine Stream</div>
+                    <div style={{ fontSize: '0.78rem', marginTop: '4px' }}>Start C++ Engine (`atos_traffic_system.exe`) or UDP Telemetry</div>
+                  </div>
+                )}
 
+                {/* Road Lane Lines */}
                 <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
                   <line x1="10%" y1="90%" x2="45%" y2="40%" stroke="rgba(0, 242, 254, 0.4)" strokeWidth="2" strokeDasharray="6,6" />
                   <line x1="90%" y1="90%" x2="55%" y2="40%" stroke="rgba(0, 242, 254, 0.4)" strokeWidth="2" strokeDasharray="6,6" />
@@ -201,6 +220,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
               </div>
             )}
 
+            {/* Bottom HUD Bar */}
             <div style={{
               position: 'absolute',
               bottom: '12px',
@@ -218,7 +238,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
               zIndex: 10
             }}>
               <span style={{ color: 'var(--text-dim)' }}>
-                Active Detections: <strong style={{ color: '#fff' }}>{idx === 0 ? telemetry.vehicles : Math.floor(cam.vehiclesCount)}</strong>
+                Active Detections: <strong style={{ color: '#fff' }}>{isOnline ? (idx === 0 ? telemetry.vehicles : 8) : 0}</strong>
               </span>
 
               <div style={{ display: 'flex', gap: '8px' }}>
