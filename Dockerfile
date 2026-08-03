@@ -1,42 +1,35 @@
-# --- Build Stage ---
-FROM python:3.10-slim-bullseye AS builder
+# ATOS Studio & Engine Unified Docker Container
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
-WORKDIR /app
-
-# Install system dependencies (OpenCV + build tools)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install build tools, OpenCV, Python, and Ninja
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
     build-essential \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+    cmake \
+    ninja-build \
+    libopencv-dev \
+    python3 \
+    python3-pip \
+    git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# Install Python dependencies
+RUN pip3 install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    websockets \
+    pyyaml \
+    psutil \
+    pydantic
 
-# --- Final Stage ---
-FROM python:3.10-slim-bullseye
+WORKDIR /workspace
+COPY . /workspace
 
-WORKDIR /app
+# Configure and compile C++ Engine
+RUN cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build --config Release
 
-# Copy installed packages from builder
-COPY --from=builder /install /usr/local
+EXPOSE 8080 5005
 
-# Install runtime dependencies for OpenCV
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy project files
-COPY . .
-
-# Environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# Expose Streamlit port
-EXPOSE 8501
-
-# Start the dashboard
-ENTRYPOINT ["streamlit", "run", "src/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["python3", "tools/web_gateway.py"]

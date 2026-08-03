@@ -1,0 +1,9 @@
+{
+  "id": "traffic-intelligence",
+  "name": "Traffic Intelligence Plugin",
+  "version": "3.1.0",
+  "domain": "Traffic & Urban Mobility",
+  "description": "Real-time vehicle counting, queue length calculation, NEMA signal phase control, and lane pressure analytics.",
+  "author": "ATOS Core Team",
+  "enabled": true
+}

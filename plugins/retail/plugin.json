@@ -1,0 +1,9 @@
+{
+  "id": "retail-density",
+  "name": "Retail & Customer Density",
+  "version": "1.4.2",
+  "domain": "Retail & Commercial",
+  "description": "Foot traffic tracking, store occupancy heatmaps, queue wait times, and customer dwell time distribution.",
+  "author": "Vision Analytics Labs",
+  "enabled": true
+}

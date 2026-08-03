@@ -1,0 +1,9 @@
+{
+  "id": "industrial-ppe",
+  "name": "Industrial PPE & Safety Guard",
+  "version": "2.0.1",
+  "domain": "Industrial Safety",
+  "description": "Hard hat compliance, high-visibility vest detection, hazardous zone breach alerts, and fall detection.",
+  "author": "SafeWork AI Labs",
+  "enabled": true
+}

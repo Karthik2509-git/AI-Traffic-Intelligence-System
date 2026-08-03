@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: atos_gateway
+    ports:
+      - "8080:8080"
+      - "5005:5005/udp"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: always
+
+  studio:
+    build:
+      context: ./studio
+      dockerfile: Dockerfile
+    container_name: atos_studio_ui
+    ports:
+      - "80:80"
+    depends_on:
+      - gateway
+    restart: always
