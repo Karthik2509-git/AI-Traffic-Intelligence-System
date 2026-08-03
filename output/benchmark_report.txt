@@ -4,22 +4,22 @@
 
 Source: data/test_4k_traffic.mp4
 Total Frames: 268
-Total Time: 4.41 s
+Total Time: 6.24 s
 Total Detections: 0
 
 --- Performance Metrics ---
-Average FPS:     60.77
-Average Latency: 499.3 ms
-Min Latency:     37.6 ms
-Max Latency:     557.5 ms
+Average FPS:     42.97
+Average Latency: 704.8 ms
+Min Latency:     70.7 ms
+Max Latency:     791.7 ms
 
 --- v1 vs v2 Comparison ---
 +------------------+------------------+------------------+
 | Metric           | v1 (Python)      | v3 (C++/TRT)     |
 +------------------+------------------+------------------+
-| FPS              | 6.43             | 60.77            |
-| Avg Latency (ms) | 155.0            | 499.3            |
-| Speedup          | 1.0x             | 9.5             x |
+| FPS              | 6.43             | 42.97            |
+| Avg Latency (ms) | 155.0            | 704.8            |
+| Speedup          | 1.0x             | 6.7             x |
 +------------------+------------------+------------------+
 
 --- Output Artifacts ---

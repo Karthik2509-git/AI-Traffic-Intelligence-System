@@ -1,8 +1,12 @@
 #pragma once
 
-// Must be before any Windows header to prevent min/max macro conflicts with std::
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 
 #include <string>
 #include <vector>
