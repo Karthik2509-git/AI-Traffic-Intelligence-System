@@ -1,5 +1,5 @@
 import React from 'react';
-import { Smartphone, Video, Wifi, Battery, Power } from 'lucide-react';
+import { Smartphone, Video, Wifi, Battery, Power, ShieldAlert } from 'lucide-react';
 
 export const MobileCamNode: React.FC = () => {
   const [sessionId, setSessionId] = React.useState<string>('');
@@ -11,6 +11,7 @@ export const MobileCamNode: React.FC = () => {
   const [frameCount, setFrameCount] = React.useState<number>(0);
   const [latencyMs] = React.useState<number>(7.2);
   const [status, setStatus] = React.useState<string>('Ready to Stream');
+  const [isSecureContext, setIsSecureContext] = React.useState<boolean>(true);
 
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
@@ -21,6 +22,11 @@ export const MobileCamNode: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     const s = params.get('session') || `mob-${Math.random().toString(36).substring(2, 9)}`;
     setSessionId(s);
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setIsSecureContext(false);
+      setStatus('Secure Context (HTTPS) Required');
+    }
 
     if ('getBattery' in navigator) {
       (navigator as any).getBattery().then((battery: any) => {
@@ -35,6 +41,10 @@ export const MobileCamNode: React.FC = () => {
   const startCamera = async () => {
     try {
       setStatus('Accessing Camera...');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera access requires HTTPS or localhost security permission.');
+      }
+
       const constraints: MediaStreamConstraints = {
         video: {
           facingMode: facingMode,
@@ -52,7 +62,8 @@ export const MobileCamNode: React.FC = () => {
       }
 
       const host = window.location.hostname || 'localhost';
-      const wsUrl = `ws://${host}:8080/ws/stream/${sessionId}`;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${host}:8080/ws/stream/${sessionId}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -149,6 +160,26 @@ export const MobileCamNode: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {!isSecureContext && (
+        <div style={{
+          background: 'rgba(255, 82, 82, 0.15)',
+          border: '1px solid #ff5252',
+          padding: '12px 16px',
+          borderRadius: '10px',
+          marginBottom: '16px',
+          fontSize: '0.8rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          color: '#ff8a8a'
+        }}>
+          <ShieldAlert size={20} color="#ff5252" />
+          <span>
+            Mobile browsers require <strong>HTTPS</strong> for camera hardware access. Make sure your phone address starts with <strong>https://</strong>.
+          </span>
+        </div>
+      )}
 
       <div style={{
         flex: 1,

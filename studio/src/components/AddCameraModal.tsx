@@ -39,7 +39,7 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
 
   if (!isOpen) return null;
 
-  const phoneUrl = `http://${selectedIp || 'localhost'}:5173/mobile?session=${sessionId}`;
+  const phoneUrl = `https://${selectedIp || 'localhost'}:5173/mobile?session=${sessionId}`;
 
   const handleCustomConnect = () => {
     onConnectCustomCam(camName, selectedType, camUrl);
@@ -156,7 +156,6 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
               SCAN WITH YOUR MOBILE PHONE
             </div>
 
-            {/* Wi-Fi Interface Selector if multiple exist */}
             {allIps.length > 1 && (
               <div style={{ width: '100%', maxWidth: '340px', textAlign: 'left' }}>
                 <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
@@ -194,7 +193,7 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
             </div>
 
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Ensure your phone is connected to the same Wi-Fi network ({selectedIp})
+              🔒 HTTPS Secure Context enabled for iOS/Android camera permission
             </div>
           </div>
         )}
