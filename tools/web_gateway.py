@@ -2,14 +2,6 @@
 """
 ATOS Studio Production FastAPI & WebSocket Gateway Server
 Bridges C++ ATOS Engine (via UDP 5005) with ATOS Studio Visual Intelligence OS.
-
-Features:
-    - FastAPI OpenAPI Swagger documentation automatically served at /docs
-    - Mobile Phone Camera Node WebSockets & Session Pairing (/ws/stream/{session_id})
-    - Local LAN IP discovery (/api/local-ip) for instant QR code mobile pairing
-    - Dynamic plugin discovery in plugins/ directory
-    - Telemetry session recorder for offline replay
-    - Real-time frame processing & bounding box overlay generator
 """
 
 import os
@@ -108,15 +100,35 @@ g_system_state = {
     ]
 }
 
-def get_local_ip():
+def get_all_lan_ips():
+    ips = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+        interfaces = psutil.net_if_addrs()
+        for iface_name, iface_addresses in interfaces.items():
+            for addr in iface_addresses:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    # Ignore known virtual adapters if real WiFi/Ethernet exists
+                    ips.append({
+                        "interface": iface_name,
+                        "ip": addr.address,
+                        "is_virtual": "virtual" in iface_name.lower() or "vethernet" in iface_name.lower() or "vmnet" in iface_name.lower()
+                    })
+    except Exception as e:
+        print(f"Network discovery error: {e}")
+
+    if not ips:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            primary = s.getsockname()[0]
+            s.close()
+            ips.append({"interface": "Primary", "ip": primary, "is_virtual": False})
+        except Exception:
+            ips.append({"interface": "Loopback", "ip": "127.0.0.1", "is_virtual": False})
+
+    # Sort real physical IPs first (e.g. Wi-Fi / Ethernet)
+    ips.sort(key=lambda x: (x["is_virtual"], not x["ip"].startswith("192.168.")))
+    return ips
 
 # Discover installed plugins
 def discover_plugins():
@@ -199,7 +211,12 @@ t_udp.start()
 # API Endpoints
 @app.get("/api/local-ip")
 def get_ip():
-    return {"local_ip": get_local_ip()}
+    all_ips = get_all_lan_ips()
+    primary_ip = all_ips[0]["ip"] if all_ips else "127.0.0.1"
+    return {
+        "local_ip": primary_ip,
+        "all_ips": all_ips
+    }
 
 @app.get("/health")
 def get_health():
@@ -346,7 +363,6 @@ def process_frame(payload: Dict[str, Any] = Body(...)):
             ]
         }
 
-# Mobile Phone Camera Node WebSocket Streaming Endpoint
 @app.websocket("/ws/stream/{session_id}")
 async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
@@ -379,7 +395,6 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
             data = await websocket.receive_text()
             payload = json.loads(data)
 
-            # Processing frame through C++ TensorRT pipeline simulator
             reply = {
                 "type": "inference_result",
                 "session_id": session_id,
@@ -391,7 +406,6 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
                 ]
             }
 
-            # Update camera stats in state
             with g_state_lock:
                 for c in g_system_state["cameras"]:
                     if c.get("session_id") == session_id:

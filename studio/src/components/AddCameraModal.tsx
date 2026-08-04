@@ -16,7 +16,8 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
   onConnectCustomCam
 }) => {
   const [selectedType, setSelectedType] = React.useState<string>('PHONE');
-  const [localIp, setLocalIp] = React.useState<string>('localhost');
+  const [selectedIp, setSelectedIp] = React.useState<string>('');
+  const [allIps, setAllIps] = React.useState<{ interface: string; ip: string; is_virtual: boolean }[]>([]);
   const [sessionId, setSessionId] = React.useState<string>('');
   const [camName, setCamName] = React.useState<string>('Camera Node');
   const [camUrl, setCamUrl] = React.useState<string>('rtsp://192.168.1.100/stream');
@@ -29,15 +30,16 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
       fetch('/api/local-ip')
         .then((res) => res.json())
         .then((data) => {
-          if (data.local_ip) setLocalIp(data.local_ip);
+          if (data.local_ip) setSelectedIp(data.local_ip);
+          if (data.all_ips) setAllIps(data.all_ips);
         })
-        .catch(() => setLocalIp('localhost'));
+        .catch(() => setSelectedIp('localhost'));
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const phoneUrl = `http://${localIp}:5173/mobile?session=${sessionId}`;
+  const phoneUrl = `http://${selectedIp || 'localhost'}:5173/mobile?session=${sessionId}`;
 
   const handleCustomConnect = () => {
     onConnectCustomCam(camName, selectedType, camUrl);
@@ -154,6 +156,35 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
               SCAN WITH YOUR MOBILE PHONE
             </div>
 
+            {/* Wi-Fi Interface Selector if multiple exist */}
+            {allIps.length > 1 && (
+              <div style={{ width: '100%', maxWidth: '340px', textAlign: 'left' }}>
+                <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                  SELECT WI-FI NETWORK INTERFACE:
+                </label>
+                <select
+                  value={selectedIp}
+                  onChange={(e) => setSelectedIp(e.target.value)}
+                  style={{
+                    width: '100%',
+                    background: '#111726',
+                    border: '1px solid var(--border-dim)',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    color: '#fff',
+                    fontSize: '0.8rem',
+                    outline: 'none'
+                  }}
+                >
+                  {allIps.map((item, idx) => (
+                    <option key={idx} value={item.ip}>
+                      {item.ip} ({item.interface})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div style={{ background: '#fff', padding: '12px', borderRadius: '12px', display: 'inline-block' }}>
               <QRCodeSVG value={phoneUrl} size={160} />
             </div>
@@ -163,7 +194,7 @@ export const AddCameraModal: React.FC<AddCameraModalProps> = ({
             </div>
 
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Scan QR code to open dedicated Mobile Edge Camera Node page on your phone
+              Ensure your phone is connected to the same Wi-Fi network ({selectedIp})
             </div>
           </div>
         )}
