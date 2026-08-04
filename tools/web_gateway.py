@@ -28,6 +28,7 @@ app = FastAPI(
     version="3.1.0"
 )
 
+# Enable CORS for HTTP and WebSockets
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -100,6 +101,27 @@ g_system_state = {
     ]
 }
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                self.disconnect(connection)
+
+ws_manager = ConnectionManager()
+
 def get_all_lan_ips():
     ips = []
     try:
@@ -107,7 +129,6 @@ def get_all_lan_ips():
         for iface_name, iface_addresses in interfaces.items():
             for addr in iface_addresses:
                 if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                    # Ignore known virtual adapters if real WiFi/Ethernet exists
                     ips.append({
                         "interface": iface_name,
                         "ip": addr.address,
@@ -126,7 +147,6 @@ def get_all_lan_ips():
         except Exception:
             ips.append({"interface": "Loopback", "ip": "127.0.0.1", "is_virtual": False})
 
-    # Sort real physical IPs first (e.g. Wi-Fi / Ethernet)
     ips.sort(key=lambda x: (x["is_virtual"], not x["ip"].startswith("192.168.")))
     return ips
 
@@ -363,6 +383,28 @@ def process_frame(payload: Dict[str, Any] = Body(...)):
             ]
         }
 
+# Real-Time Telemetry WebSocket
+@app.websocket("/ws/telemetry")
+async def websocket_telemetry_endpoint(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            with g_state_lock:
+                snapshot = {
+                    "engine_status": g_system_state["engine_status"],
+                    "telemetry": g_system_state["telemetry"],
+                    "cameras": g_system_state["cameras"],
+                    "metrics": g_system_state["engine_metrics"],
+                    "timestamp": time.time()
+                }
+            await websocket.send_json(snapshot)
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+# Mobile Phone Camera Node WebSocket Streaming Endpoint
 @app.websocket("/ws/stream/{session_id}")
 async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
