@@ -68,7 +68,7 @@ export const MobileCamNode: React.FC = () => {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setStatus('Streaming Live');
+        setStatus('Streaming Live to Studio');
         setIsStreaming(true);
       };
 
@@ -81,16 +81,18 @@ export const MobileCamNode: React.FC = () => {
       canvasRef.current = canvas;
       const ctx = canvas.getContext('2d');
 
-      const intervalMs = 1000 / fpsTarget;
+      const intervalMs = 1000 / Math.min(fpsTarget, 15);
       const streamTimer = setInterval(() => {
         if (!ws || ws.readyState !== WebSocket.OPEN || !videoRef.current) return;
 
-        canvas.width = 640;
-        canvas.height = 360;
-        ctx?.drawImage(videoRef.current, 0, 0, 640, 360);
+        canvas.width = 480;
+        canvas.height = 270;
+        ctx?.drawImage(videoRef.current, 0, 0, 480, 270);
+        const base64Image = canvas.toDataURL('image/jpeg', 0.5);
 
         const payload = {
           session_id: sessionId,
+          image: base64Image,
           timestamp: Date.now(),
           battery: batteryPct,
           resolution: resolution,

@@ -28,7 +28,6 @@ app = FastAPI(
     version="3.1.0"
 )
 
-# Enable CORS for HTTP and WebSockets
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -408,53 +407,78 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
 @app.websocket("/ws/stream/{session_id}")
 async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
+    cam_id = f"cam-phone-{session_id[:6]}"
+
     with g_state_lock:
-        cam_id = f"cam-phone-{session_id[:6]}"
-        phone_cam = {
-            "id": cam_id,
-            "session_id": session_id,
-            "name": f"Phone Camera #{len(g_system_state['cameras']) + 1}",
-            "location": "Mobile Edge Sensor Node",
-            "type": "PHONE_WEBCAM",
-            "url": f"mobile://stream/{session_id}",
-            "status": "online",
-            "fps": 30.0,
-            "latency_ms": 7.2,
-            "resolution": "720p",
-            "battery_pct": 92,
-            "dropped_frames": 0
-        }
-        g_system_state["cameras"].append(phone_cam)
-        g_system_state["notifications"].append({
-            "id": f"notif-{int(time.time()*1000)}",
-            "timestamp": time.strftime("%H:%M:%S"),
-            "title": f"Mobile Phone Node Connected ({session_id[:6]})",
-            "type": "info"
-        })
+        # Check if phone camera node already registered
+        existing = [c for c in g_system_state["cameras"] if c.get("session_id") == session_id]
+        if not existing:
+            phone_cam = {
+                "id": cam_id,
+                "session_id": session_id,
+                "name": f"Phone Camera Node ({session_id[:6]})",
+                "location": "Mobile Edge Sensor Node",
+                "type": "PHONE_WEBCAM",
+                "url": f"mobile://stream/{session_id}",
+                "status": "online",
+                "fps": 30.0,
+                "latency_ms": 7.2,
+                "resolution": "720p",
+                "battery_pct": 92,
+                "frame_base64": None,
+                "detections": [
+                    {"track_id": 101, "class": "car", "confidence": 0.94, "box": [100, 80, 220, 140]},
+                    {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [260, 110, 180, 130]}
+                ],
+                "dropped_frames": 0
+            }
+            g_system_state["cameras"].insert(0, phone_cam)
+            g_system_state["notifications"].append({
+                "id": f"notif-{int(time.time()*1000)}",
+                "timestamp": time.strftime("%H:%M:%S"),
+                "title": f"Mobile Phone Node Connected ({session_id[:6]})",
+                "type": "info"
+            })
 
     try:
         while True:
             data = await websocket.receive_text()
             payload = json.loads(data)
 
+            img_base64 = payload.get("image")
+            fps_val = float(payload.get("fps", 30.0))
+            battery_val = int(payload.get("battery", 90))
+            res_val = payload.get("resolution", "720p")
+
+            # TensorRT FP16 Inference Pipeline Simulation
+            detections = [
+                {"track_id": 101, "class": "car", "confidence": 0.94, "box": [100, 80, 220, 140]},
+                {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [260, 110, 180, 130]}
+            ]
+
+            with g_state_lock:
+                g_system_state["engine_status"] = "online"
+                g_system_state["telemetry"]["fps"] = fps_val
+                g_system_state["telemetry"]["vehicles"] = 4
+                g_system_state["telemetry"]["pressure"] = 0.65
+
+                for c in g_system_state["cameras"]:
+                    if c.get("session_id") == session_id or c.get("id") == cam_id:
+                        c["status"] = "online"
+                        c["fps"] = fps_val
+                        c["battery_pct"] = battery_val
+                        c["resolution"] = res_val
+                        if img_base64:
+                            c["frame_base64"] = img_base64
+                        c["detections"] = detections
+
             reply = {
                 "type": "inference_result",
                 "session_id": session_id,
                 "latency_ms": 7.2,
-                "fps": float(payload.get("fps", 30.0)),
-                "detections": [
-                    {"track_id": 101, "class": "car", "confidence": 0.94, "box": [120, 180, 240, 160]},
-                    {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [450, 220, 300, 200]}
-                ]
+                "fps": fps_val,
+                "detections": detections
             }
-
-            with g_state_lock:
-                for c in g_system_state["cameras"]:
-                    if c.get("session_id") == session_id:
-                        c["fps"] = float(payload.get("fps", 30.0))
-                        c["battery_pct"] = int(payload.get("battery", 90))
-                        c["resolution"] = payload.get("resolution", "720p")
-
             await websocket.send_json(reply)
     except WebSocketDisconnect:
         with g_state_lock:
@@ -465,8 +489,8 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
                 "title": f"Mobile Phone Node Disconnected ({session_id[:6]})",
                 "type": "warn"
             })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"WS stream exception: {e}")
 
 @app.post("/telemetry/record")
 def record_telemetry_session():

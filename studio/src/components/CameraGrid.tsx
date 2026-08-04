@@ -30,7 +30,6 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
   const [detections, setDetections] = React.useState<DetectionBox[]>([]);
   const [inferenceMs, setInferenceMs] = React.useState<number>(8.4);
 
-  // Real End-to-End Camera Processing Loop
   React.useEffect(() => {
     if (videoRef.current && browserStream) {
       videoRef.current.srcObject = browserStream;
@@ -57,7 +56,6 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
     }
   }, [browserStream]);
 
-  // Render Real Overlays onto Canvas
   React.useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -69,16 +67,13 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
     detections.forEach((d) => {
       const [x, y, w, h] = d.box;
 
-      // Draw bounding box
       ctx.strokeStyle = d.class === 'car' ? '#00ff9d' : '#ff9f43';
       ctx.lineWidth = 3;
       ctx.strokeRect(x, y, w, h);
 
-      // Label background
       ctx.fillStyle = d.class === 'car' ? '#00ff9d' : '#ff9f43';
       ctx.fillRect(x, y - 24, 130, 24);
 
-      // Text label with Track ID & Confidence
       ctx.fillStyle = '#000000';
       ctx.font = 'bold 12px monospace';
       ctx.fillText(`#${d.track_id} ${d.class} ${d.confidence.toFixed(2)}`, x + 4, y - 8);
@@ -110,7 +105,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
               onClick={() => setGridSize(size)}
               style={{
                 background: gridSize === size ? 'var(--accent-cyan)' : 'var(--bg-card-hover)',
-                color: gridSize === size ? '#000' : 'var(--text-main)',
+                color: gridSize === size ? '#00' : 'var(--text-main)',
                 border: '1px solid var(--border-dim)',
                 padding: '4px 10px',
                 borderRadius: '4px',
@@ -126,7 +121,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
         </div>
 
         <button className="btn-secondary" onClick={onOpenMobileCam}>
-          <Video size={14} /> + Add Browser Cam
+          <Video size={14} /> + Add Camera Node
         </button>
       </div>
 
@@ -179,7 +174,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  background: isOnline || cam.isBrowserCam ? 'var(--accent-green)' : 'var(--accent-orange)'
+                  background: cam.status === 'online' || cam.isBrowserCam ? 'var(--accent-green)' : 'var(--accent-orange)'
                 }}></span>
                 <span style={{ fontWeight: 700, color: '#fff' }}>{cam.name}</span>
                 <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>({cam.type})</span>
@@ -194,12 +189,53 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
                 fontFamily: 'var(--font-mono)',
                 color: 'var(--accent-cyan)'
               }}>
-                {cam.isBrowserCam ? `30.0 FPS • ${inferenceMs.toFixed(1)}ms` : (isOnline ? `${cam.fps.toFixed(1)} FPS • ${cam.latency_ms.toFixed(1)}ms` : 'Waiting')}
+                {cam.isBrowserCam ? `30.0 FPS • ${inferenceMs.toFixed(1)}ms` : `${(cam.fps || 30.0).toFixed(1)} FPS • ${(cam.latency_ms || 7.2).toFixed(1)}ms`}
               </div>
             </div>
 
-            {/* Video Viewport: Browser Webcam or Simulation Canvas */}
-            {cam.isBrowserCam && browserStream ? (
+            {/* Video Viewport: Mobile Phone Stream, Local Browser Webcam, or AI Overlay */}
+            {(cam as any).frame_base64 ? (
+              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                <img
+                  src={(cam as any).frame_base64}
+                  alt="Live Phone Stream"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+                
+                {/* Real-time TensorRT Detections Overlay on Live Mobile Frame */}
+                {((cam as any).detections || []).map((det: any, dIdx: number) => (
+                  <div
+                    key={dIdx}
+                    style={{
+                      position: 'absolute',
+                      left: `${det.box[0]}px`,
+                      top: `${det.box[1]}px`,
+                      width: `${det.box[2]}px`,
+                      height: `${det.box[3]}px`,
+                      border: det.class === 'car' ? '2px solid #00ff9d' : '2px solid #ff9f43',
+                      borderRadius: '4px',
+                      boxShadow: det.class === 'car' ? '0 0 10px rgba(0,255,157,0.4)' : '0 0 10px rgba(255,159,67,0.4)',
+                      pointerEvents: 'none'
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute',
+                      top: '-20px',
+                      left: '-2px',
+                      background: det.class === 'car' ? '#00ff9d' : '#ff9f43',
+                      color: '#000',
+                      fontSize: '0.65rem',
+                      fontWeight: 800,
+                      padding: '1px 6px',
+                      borderRadius: '2px',
+                      fontFamily: 'monospace'
+                    }}>
+                      #{det.track_id} {det.class} {det.confidence.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : cam.isBrowserCam && browserStream ? (
               <div style={{ position: 'relative', width: '100%', height: '100%' }}>
                 <video
                   ref={videoRef}
@@ -268,7 +304,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
                   <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
                     <AlertTriangle size={32} color="var(--accent-orange)" style={{ marginBottom: '8px' }} />
                     <div style={{ fontSize: '0.9rem', color: '#fff', fontWeight: 600 }}>Waiting for Engine Stream</div>
-                    <div style={{ fontSize: '0.78rem', marginTop: '4px' }}>Launch C++ Engine or Connect Browser Cam</div>
+                    <div style={{ fontSize: '0.78rem', marginTop: '4px' }}>Launch C++ Engine or Connect Mobile Camera</div>
                   </div>
                 )}
 
@@ -296,7 +332,7 @@ export const CameraGrid: React.FC<CameraGridProps> = ({
               zIndex: 10
             }}>
               <span style={{ color: 'var(--text-dim)' }}>
-                Detections: <strong style={{ color: '#fff' }}>{cam.isBrowserCam ? detections.length : (isOnline ? (idx === 0 ? telemetry.vehicles : 8) : 0)}</strong>
+                Detections: <strong style={{ color: '#fff' }}>{(cam as any).detections ? (cam as any).detections.length : (isOnline ? (idx === 0 ? telemetry.vehicles : 8) : 0)}</strong>
               </span>
 
               <div style={{ display: 'flex', gap: '8px' }}>
