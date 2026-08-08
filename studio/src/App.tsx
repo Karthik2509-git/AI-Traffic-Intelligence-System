@@ -60,20 +60,19 @@ export function App() {
     { id: 'cam-4', name: 'West Commercial Zone', location: 'Retail Center Blvd.', status: 'waiting_for_engine', fps: 0.0, latency_ms: 0.0, vehiclesCount: 0, type: 'ONVIF', url: 'rtsp://192.168.1.104/stream' },
   ]);
 
-  // Check path for /mobile route
   React.useEffect(() => {
     if (window.location.pathname.startsWith('/mobile') || window.location.search.includes('session=')) {
       setIsMobileRoute(true);
     }
   }, []);
 
-  // Real WebSocket & REST Telemetry Connection Loop
   React.useEffect(() => {
     let ws: WebSocket | null = null;
 
     const connectWebSocket = () => {
       try {
-        const wsUrl = `ws://${window.location.hostname}:8080/ws/telemetry`;
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/telemetry`;
         ws = new WebSocket(wsUrl);
 
         ws.onmessage = (event) => {
@@ -162,14 +161,12 @@ export function App() {
     }
   };
 
-  // Render Mobile Transmitter Page directly if on /mobile route
   if (isMobileRoute) {
     return <MobileCamNode />;
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-dark)' }}>
-      {/* Top Navbar */}
       <Navbar
         telemetry={telemetry}
         engineStatus={engineStatus}
@@ -178,16 +175,13 @@ export function App() {
         onOpenAddCameraModal={() => setIsAddCamModalOpen(true)}
       />
 
-      {/* Main App Layout */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left Sidebar Navigation */}
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           engineStatus={engineStatus}
         />
 
-        {/* Viewport Content */}
         <main style={{ flex: 1, padding: '20px', overflowY: 'auto', background: 'var(--bg-dark)' }}>
           {activeTab === 'grid' && (
             <CameraGrid
@@ -241,7 +235,6 @@ export function App() {
         </main>
       </div>
 
-      {/* Add Camera Modal with QR Code pairing */}
       <AddCameraModal
         isOpen={isAddCamModalOpen}
         onClose={() => setIsAddCamModalOpen(false)}
@@ -249,7 +242,6 @@ export function App() {
         onConnectCustomCam={handleConnectCustomCam}
       />
 
-      {/* Browser Webcam Camera Pairing Modal */}
       <BrowserCamModal
         isOpen={isBrowserCamOpen}
         onClose={() => setIsBrowserCamOpen(false)}

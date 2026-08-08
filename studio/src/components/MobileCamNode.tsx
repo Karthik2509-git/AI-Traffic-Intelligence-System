@@ -42,7 +42,7 @@ export const MobileCamNode: React.FC = () => {
     try {
       setStatus('Accessing Camera...');
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera access requires HTTPS or localhost security permission.');
+        throw new Error('Camera access requires HTTPS security permission.');
       }
 
       const constraints: MediaStreamConstraints = {
@@ -61,9 +61,10 @@ export const MobileCamNode: React.FC = () => {
         videoRef.current.srcObject = stream;
       }
 
-      const host = window.location.hostname || 'localhost';
+      // Connect WebSocket via same host origin (proxied by Vite)
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${host}:8080/ws/stream/${sessionId}`;
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws/stream/${sessionId}`;
+      
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -75,6 +76,11 @@ export const MobileCamNode: React.FC = () => {
       ws.onclose = () => {
         setStatus('Disconnected');
         setIsStreaming(false);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WS error:', err);
+        setStatus('WebSocket Error (Reconnecting)');
       };
 
       const canvas = canvasRef.current || document.createElement('canvas');
