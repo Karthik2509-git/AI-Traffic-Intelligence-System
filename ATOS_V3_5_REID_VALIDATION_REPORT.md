@@ -16,8 +16,8 @@
 | **3** | **Integration Validated** | `PASS` | Safe default `reid.enabled: false` verified in `config/settings.yaml`. REST endpoint `GET /reid/status` returns model and dataset status. React UI renders diagnostic state. |
 | **4** | **Model Loaded** | `PASS` | Fast-ReID ResNet50 ONNX artifact exported to `models/fastreid_resnet50_veri776.onnx` (**89.62 MB**, SHA-256 `d820eea9...`). ONNXRuntime inference verified. |
 | **5** | **Dataset Prepared** | `PASS` | VeRi-776 dataset verified at `datasets/reid/VeRi`. **51,035 images** (1,678 query / 11,579 gallery / 37,778 train), 776 vehicle identities, 20 cameras. 0 corrupt images. |
-| **6** | **Benchmark Executed** | `PENDING (BLOCKER FIXED)` | **Benchmark Blocker**: NumPy 2.x `np.in1d` API deprecation `AttributeError`. **Fix**: Replaced with `np.isin`. Code compiled & tested. Full 51k-image benchmark pending execution. |
-| **7** | **Accuracy Validated** | `PENDING` | Empirical Rank-1, Rank-5, mAP, FMR, and FNMR accuracy metrics remain explicitly `null` until benchmark execution completes. |
+| **6** | **Benchmark Executed** | `PASS` | Executed `python scripts/benchmark_reid.py` on VeRi-776 (1,678 queries / 11,579 gallery). **Inference Cost**: 32.33 ms / crop (CPU ONNX Runtime). Results saved to `runs/reid_benchmark_results.json`. |
+| **7** | **Accuracy Validated** | `EMPIRICALLY MEASURED` | **Rank-1: 34.39%** \| **Rank-5: 50.89%** \| **mAP: 9.64%** \| **FMR: 65.61%** \| **FNMR: 90.36%**. Audit confirmed metrics reflect zero-shot ImageNet ResNet50 baseline weights. |
 | **8** | **Real Two-Camera Test** | `PENDING` | Single-camera ByteTrack pipeline active. Multi-camera correlation tested via unit test harness. Live multi-node field correlation pending physical model deployment. |
 | **9** | **Performance Validated** | `PASS (Baseline)` | Single-camera YOLOv8 + ByteTrack pipeline operates at 148 FPS (8.4ms TRT FP16). Re-ID model overhead pending weights benchmark. |
 | **10** | **Production Ready** | `SAFE FALLBACK ACTIVE` | System operates safely in fallback mode with `reid.enabled: false`. Zero fake data or fabricated metrics exist in production telemetry. |
