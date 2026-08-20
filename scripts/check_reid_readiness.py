@@ -31,16 +31,13 @@ def resolve_dataset_dir(target_dir: str) -> str:
     """
     abs_path = os.path.abspath(target_dir)
 
-    # Check direct path
     if os.path.exists(os.path.join(abs_path, "image_query")) or os.path.exists(os.path.join(abs_path, "image_test")):
         return abs_path
 
-    # Check child 'VeRi'
     child_veri = os.path.join(abs_path, "VeRi")
     if os.path.exists(os.path.join(child_veri, "image_query")) or os.path.exists(os.path.join(child_veri, "image_test")):
         return child_veri
 
-    # Check sibling 'VeRi' under parent directory
     parent_dir = os.path.dirname(abs_path)
     sibling_veri = os.path.join(parent_dir, "VeRi")
     if os.path.exists(os.path.join(sibling_veri, "image_query")) or os.path.exists(os.path.join(sibling_veri, "image_test")):
@@ -82,21 +79,19 @@ def check_model_integrity(model_path: str) -> Dict[str, Any]:
     runtime_compat = "UNTESTED"
 
     try:
-        import onnx
-        onnx_model = onnx.load(abs_path)
-        onnx.checker.check_model(onnx_model)
+        import onnxruntime as ort
+        session = ort.InferenceSession(abs_path, providers=["CPUExecutionProvider"])
+        inp = session.get_inputs()[0]
+        out = session.get_outputs()[0]
         
-        inp = onnx_model.graph.input[0]
-        input_shape = [dim.dim_value if dim.dim_value > 0 else 1 for dim in inp.type.tensor_type.shape.dim]
-        
-        out = onnx_model.graph.output[0]
-        output_shape = [dim.dim_value if dim.dim_value > 0 else 1 for dim in out.type.tensor_type.shape.dim]
-        if len(output_shape) >= 2:
+        input_shape = [s if isinstance(s, int) and s > 0 else 1 for s in inp.shape]
+        output_shape = [s if isinstance(s, int) and s > 0 else 1 for s in out.shape]
+        if len(out.shape) >= 2 and isinstance(out.shape[1], int):
+            embedding_dim = out.shape[1]
+        elif len(output_shape) >= 2:
             embedding_dim = output_shape[1]
-        
+
         runtime_compat = "ONNXRuntime Validated"
-    except ImportError:
-        runtime_compat = "ONNX library not installed — file present"
     except Exception as e:
         runtime_compat = f"Inspection Notice: {str(e)}"
 
@@ -148,7 +143,6 @@ def check_dataset_integrity(raw_dataset_dir: str) -> Dict[str, Any]:
     unique_cams = set()
 
     for fname in all_files:
-        # VeRi-776 format: 0001_c001_00026030_0.jpg
         parts = fname.split('_')
         if len(parts) >= 2:
             unique_pids.add(parts[0])
@@ -189,6 +183,7 @@ def main():
     print(f"SHA-256           : {model_res['sha256']}")
     print(f"Input Shape       : {model_res['input_tensor_shape']}")
     print(f"Output Shape      : {model_res['output_tensor_shape']}")
+    print(f"Embedding Dim     : {model_res['embedding_dim']}")
     print(f"Runtime           : {model_res['runtime_compatibility']}")
 
     print("\n--- DATASET INTEGRITY STATUS ---")

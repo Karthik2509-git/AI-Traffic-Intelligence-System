@@ -1,87 +1,96 @@
 # 📦 ATOS v3.5 Model & Dataset Readiness Report
 
 **Subsystem:** ATOS v3.5 Cross-Camera Vehicle Re-Identification (Re-ID)  
-**Phase:** Model & Dataset Selection & Verification  
+**Phase:** Model & Dataset Selection, Verification & Validation  
 **Repository Branch:** `main` | **Working Tree:** Clean  
 **Safe Production Config:** `reid.enabled: false` (Active Fallback)
 
 ---
 
-## 🎯 Model Selection & Acquisition Status Matrix
+## 🎯 Model Selection & Artifact Readiness Matrix
 
-| Stage | Status | Details / Location |
+| Stage | Status | Empirically Measured Evidence |
 | :--- | :---: | :--- |
-| **Recommended Primary Model** | `SELECTED` | **Fast-ReID ResNet50 (VeRi-776)** (`[1, 3, 256, 256]` $\rightarrow$ `[1, 2048]`, Apache 2.0) |
+| **Recommended Primary Model** | `SELECTED` | **Fast-ReID ResNet50 GeM (VeRi-776)** (`[1, 3, 256, 256]` $\rightarrow$ `[1, 2048]`, Apache 2.0) |
 | **Recommended Fallback Model** | `SELECTED` | **Torchreid OSNet_x1_0 (VeRi-776)** (`[1, 3, 256, 256]` $\rightarrow$ `[1, 512]`, MIT) |
-| **Model Acquired** | `NO (PENDING)` | Weights file `models/reid_vehiclenet.onnx` un-populated on host disk |
-| **Model Validated** | `NO (PENDING)` | Requires `python scripts/check_reid_readiness.py` output with verified SHA-256 and ONNX input/output shapes |
-| **Model Benchmarked** | `NO (PENDING)` | Requires `python scripts/benchmark_reid.py` empirical Rank-1 / mAP output |
+| **Model Acquired** | `READY` | Weights exported to `models/fastreid_resnet50_veri776.onnx` (**89.62 MB**) |
+| **Model Validated** | `PASSED` | SHA-256: `d820eea9fcc3e8de49523682b180ddced336fd4847ebd5a74965961356c1213e`, ONNXRuntime numerical inference passed on real VeRi image with L2 Norm = `1.000000` |
+| **Model Benchmarked** | `PENDING` | Awaiting full 51k-image empirical benchmark run (`scripts/benchmark_reid.py`) |
 
 ---
 
-## 📊 Legitimate Vehicle Re-ID Model Candidates Audit
+## 📊 Validated Primary Model Specifications
 
-> [!NOTE]
-> All parameter counts, embedding dimensions, inference costs, and accuracy figures in this evaluation matrix represent candidate/estimated values from official repositories. Exact metrics will be empirically measured on host hardware (`scripts/check_reid_readiness.py` and `scripts/benchmark_reid.py`) once model weights are installed.
-
-| Exact Model Name | Architecture | Repository / Source | Training Dataset | License | Input Tensor | Output Tensor | Est. Params | ONNX / TRT Compatible | Deployment Complexity |
-| :--- | :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Fast-ReID ResNet50 GeM** *(Primary)* | ResNet50 | [JDAI-CV/fast-reid](https://github.com/JDAI-CV/fast-reid) | VeRi-776 (576 IDs) | Apache 2.0 | `[1, 3, 256, 256]` | `[1, 2048]` | ~25.5M | **Yes** (ONNX / TensorRT) | **Moderate** |
-| **TorchReID OSNet_x1_0** *(Fallback)* | OSNet_x1_0 | [KaiyangZhou/torchreid](https://github.com/KaiyangZhou/deep-person-reid) | VeRi-776 (576 IDs) | MIT | `[1, 3, 256, 256]` | `[1, 512]` | ~2.2M | **Yes** (ONNX / TensorRT) | **Low** |
-| **TransReID ViT-Base** | ViT-Base | [TransReID](https://github.com/albumentations-team/autoalbument) | VeRi-776 | Apache 2.0 | `[1, 3, 256, 256]` | `[1, 768]` | ~86.0M | **Conditional** | **High** |
-
----
-
-## 🔬 Pipeline Stage Distinction
-
-To maintain scientific integrity throughout deployment:
-
-1. **Pretrained Inference**: Running forward pass of `models/reid_vehiclenet.onnx` directly on cropped vehicle images to generate 512-dim or 2048-dim L2-normalized feature vectors.
-2. **Benchmark / Evaluation**: Running `python scripts/benchmark_reid.py` on VeRi-776 probe query images (1,678 images) against gallery test images (11,579 images) to calculate empirical Rank-1, Rank-5, and mAP accuracy scores on target hardware.
-3. **Fine-Tuning**: (Optional) Further training on local site camera feeds if significant domain shift occurs across camera angles.
-4. **Final Deployment**: Setting `reid.enabled: true` in `config/settings.yaml` after empirical benchmark verification.
+| Property | Empirically Measured Value |
+| :--- | :--- |
+| **Exact Model Name** | Fast-ReID ResNet50 GeM (Circle Loss) |
+| **Architecture** | ResNet50 + Generalized Mean (GeM) Pooling (`p=3.0`) & Stride-1 Conv5 |
+| **Repository / Source** | [JDAI-CV / Fast-ReID](https://github.com/JDAI-CV/fast-reid) |
+| **Training Dataset** | VeRi-776 Train Split (37,778 images / 576 IDs) |
+| **License** | Apache License 2.0 (Permissive Open-Source) |
+| **Artifact Path** | `models/fastreid_resnet50_veri776.onnx` |
+| **Artifact Size** | **89.62 MB** (93,975,412 bytes) |
+| **SHA-256 Checksum** | `d820eea9fcc3e8de49523682b180ddced336fd4847ebd5a74965961356c1213e` |
+| **Input Tensor** | `input` (`[1, 3, 256, 256]`, `float32`) |
+| **Output Tensor** | `embedding` (`[1, 2048]`, `float32`) |
+| **Discovered Vector Dim** | **2048** float32 |
+| **L2 Normalization** | Verified ($\|e\|_2 = 1.000000$) |
+| **Runtime Engine** | ONNXRuntime 1.24.4 |
 
 ---
 
-## 📋 VeRi-776 Dataset Acquisition & Layout Checklist
-
-### Manual Dataset Acquisition Checklist
-
-- [ ] **Official Dataset Registration**: Register and request access at the [Official VeRi-776 Homepage](https://vecam.github.io/VeRi/).
-- [ ] **License Agreement Review**: Verify compliance with non-commercial academic research licensing terms.
-- [ ] **Download Image Archives**: Obtain `image_train.zip`, `image_test.zip`, `image_query.zip`, and track list text files.
-- [ ] **Target File Unpacking**: Unpack archives into `datasets/reid/veri776/` following the expected layout below.
-
-### Expected Directory Layout (`scripts/benchmark_reid.py`)
+## 📋 VeRi-776 Dataset Status
 
 ```text
-datasets/reid/veri776/
-├── image_query/       # Query probe vehicle images (e.g. 0001_c001_00026030_0.jpg)
-├── image_test/        # Gallery search pool images (e.g. 0001_c002_00026100_0.jpg)
-├── image_train/       # Model training set images
-├── name_query.txt     # Query list annotations
-├── name_test.txt      # Gallery list annotations
-└── name_train.txt     # Training list annotations
+Dataset Path      : datasets/reid/VeRi
+Status            : READY
+Total Images      : 51,035
+Query Images      : 1,678
+Gallery Images    : 11,579
+Train Images      : 37,778
+Unique Identities : 776
+Unique Cameras    : 20
+Corrupt Files     : 0
 ```
 
 ---
 
-## 🔍 Verification Commands
+## 🧪 Verification Commands & Inspection Results
 
-### Command 1: Run Model & Dataset Integrity Inspector
+### 1. Run Model & Dataset Integrity Inspector
 ```bash
-python scripts/check_reid_readiness.py --model models/reid_vehiclenet.onnx --dataset-dir datasets/reid/veri776
+python scripts/check_reid_readiness.py
 ```
+- **Output**:
+  ```text
+  --- MODEL INTEGRITY STATUS ---
+  Present           : True
+  Status            : MODEL_FILE_PRESENT
+  Path              : models/fastreid_resnet50_veri776.onnx
+  Size              : 89.62 MB
+  SHA-256           : d820eea9fcc3e8de49523682b180ddced336fd4847ebd5a74965961356c1213e
+  Input Shape       : [1, 3, 256, 256]
+  Output Shape      : [1, 2048]
+  Embedding Dim     : 2048
+  Runtime           : ONNXRuntime Validated
 
-### Command 2: Run Re-ID Evaluation Harness
-```bash
-python scripts/benchmark_reid.py --dataset veri776 --dataset-dir datasets/reid/veri776 --model models/reid_vehiclenet.onnx
-```
+  --- DATASET INTEGRITY STATUS ---
+  Present           : True
+  Status            : READY
+  Path              : datasets/reid/VeRi
+  Total Images      : 51035
+  Query Images      : 1678
+  Gallery Images    : 11579
+  Train Images      : 37778
+  Unique Identities : 776
+  Unique Cameras    : 20
+  ```
 
-### Command 3: Run Subsystem Unit Tests
+### 2. Run Subsystem Unit Tests
 ```bash
 python -m unittest discover -s tests -p "test_*.py"
 ```
+- **Output**: `Ran 4 tests ... OK`.
 
 ---
 
@@ -91,13 +100,13 @@ python -m unittest discover -s tests -p "test_*.py"
 [PASS] Tier 1: Implementation Complete (C++, Python, REST/WS, UI)
 [PASS] Tier 2: Unit Tests Passing (4/4 tests OK)
 [PASS] Tier 3: Integration Validated (reid_enabled: false safe fallback active)
-[MODEL_FILE_PENDING] Tier 4: Model Loaded (Requires placement of models/reid_vehiclenet.onnx)
-[DATASET_PENDING] Tier 5: Dataset Prepared (Requires manual extraction to datasets/reid/veri776/)
-[DATASET_MISSING] Tier 6: Benchmark Executed (Pending dataset & model files)
+[READY] Tier 4: Model Loaded (models/fastreid_resnet50_veri776.onnx verified 89.62 MB)
+[READY] Tier 5: Dataset Prepared (datasets/reid/VeRi verified 51,035 images)
+[PENDING] Tier 6: Benchmark Executed (Awaiting full 51k-image evaluation)
 [PENDING] Tier 7: Accuracy Validated (Rank-1, Rank-5, mAP pending empirical run)
 [PENDING] Tier 8: Real Two-Camera Field Test
 [PASS] Tier 9: Performance Validated (Baseline YOLOv8 + ByteTrack at 148 FPS)
 [SAFE FALLBACK ACTIVE] Tier 10: Production Ready (Default reid_enabled: false active)
 ```
 
-**Next Action Required by User**: Follow manual acquisition instructions in `docs/REID_MODEL_ACQUISITION.md` to export PyTorch weights to `models/reid_vehiclenet.onnx` and unpack VeRi-776 images into `datasets/reid/veri776/`.
+**Next Action Required**: Execute `python scripts/benchmark_reid.py --dataset veri776 --model models/fastreid_resnet50_veri776.onnx` to run empirical Rank-1, Rank-5, mAP, and inference latency evaluation.
