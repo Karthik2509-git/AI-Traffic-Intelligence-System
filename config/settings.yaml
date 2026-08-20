@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# ATOS v2.0 — C++ Engine Configuration
+# ATOS v3.5 — Engine & Re-ID Configuration
 # ═══════════════════════════════════════════════════════════════════
 
 # TensorRT Engine
@@ -14,6 +14,15 @@ detection:
   nms_threshold: 0.55
   max_detections: 128
   vehicle_classes: [2, 3, 5, 7]   # COCO: car, motorcycle, bus, truck
+
+# Cross-Camera Vehicle Re-Identification (Re-ID) Subsystem
+reid:
+  enabled: false # Default safe fallback (disabled until model is validated)
+  model_path: "models/reid_vehiclenet.engine"
+  similarity_threshold: 0.75
+  embedding_dim: 512
+  max_spatiotemporal_window_sec: 300
+  top_k_matches: 5
 
 # Telemetry (UDP)
 telemetry:

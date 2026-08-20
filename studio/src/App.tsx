@@ -16,6 +16,7 @@ import { LogViewer } from './components/LogViewer';
 import { BrowserCamModal } from './components/BrowserCamModal';
 import { AddCameraModal } from './components/AddCameraModal';
 import { MobileCamNode } from './components/MobileCamNode';
+import { ReIDDashboard } from './components/ReIDDashboard';
 
 export function App() {
   const [isMobileRoute, setIsMobileRoute] = React.useState<boolean>(false);
@@ -195,6 +196,10 @@ export function App() {
 
           {activeTab === 'analytics' && (
             <TrafficAnalytics telemetry={telemetry} engineStatus={engineStatus} />
+          )}
+
+          {activeTab === 'reid' && (
+            <ReIDDashboard />
           )}
 
           {activeTab === 'signal' && (

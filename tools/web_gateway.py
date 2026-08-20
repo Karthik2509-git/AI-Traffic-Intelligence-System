@@ -2,6 +2,7 @@
 """
 ATOS Studio Production FastAPI & WebSocket Gateway Server
 Bridges C++ ATOS Engine (via UDP 5005) with ATOS Studio Visual Intelligence OS.
+Includes ATOS v3.5 Cross-Camera Vehicle Re-Identification (Re-ID) endpoints.
 """
 
 import os
@@ -22,10 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse, Response
 from pydantic import BaseModel
 
+from tools.reid_engine import CrossCameraReIDManager
+
 app = FastAPI(
     title="ATOS Studio Visual Intelligence OS API",
     description="OpenAPI control plane & high-performance telemetry bridge for ATOS CUDA/TensorRT Engine",
-    version="3.1.0"
+    version="3.5.0"
 )
 
 app.add_middleware(
@@ -40,6 +43,19 @@ CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "con
 PLUGINS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
 RECORDS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "runs", "telemetry_sessions"))
 os.makedirs(RECORDS_DIR, exist_ok=True)
+
+# Load configuration settings
+def load_settings_dict():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    return {}
+
+g_settings = load_settings_dict()
+g_reid_manager = CrossCameraReIDManager(g_settings.get("reid", {}))
 
 g_state_lock = threading.Lock()
 
@@ -149,7 +165,6 @@ def get_all_lan_ips():
     ips.sort(key=lambda x: (x["is_virtual"], not x["ip"].startswith("192.168.")))
     return ips
 
-# Discover installed plugins
 def discover_plugins():
     plugins_list = []
     if os.path.exists(PLUGINS_DIR):
@@ -167,7 +182,6 @@ def discover_plugins():
 
 discover_plugins()
 
-# Background UDP Listener
 def udp_telemetry_listener(udp_port: int = 5005):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -255,6 +269,7 @@ def get_telemetry():
         return {
             "status": g_system_state["engine_status"],
             "data": g_system_state["telemetry"],
+            "reid": g_reid_manager.get_system_summary(),
             "last_updated": time.strftime("%H:%M:%S")
         }
 
@@ -299,6 +314,45 @@ def get_notifications():
     with g_state_lock:
         return {"notifications": g_system_state["notifications"]}
 
+# ATOS v3.5 Re-ID Subsystem API Endpoints
+@app.get("/reid/status")
+def get_reid_status():
+    """Returns current status of Re-ID subsystem and measured benchmark results."""
+    return g_reid_manager.get_system_summary()
+
+@app.get("/reid/matches")
+def get_reid_matches(limit: int = 50):
+    """Returns recent cross-camera identity matches."""
+    return {"matches": g_reid_manager.get_matches(limit)}
+
+@app.get("/reid/graph")
+def get_reid_graph():
+    """Returns camera transition topology graph data."""
+    return {"graph": g_reid_manager.get_transition_graph()}
+
+class ReIDQueryReq(BaseModel):
+    embedding: List[float]
+    top_k: Optional[int] = 5
+
+@app.post("/reid/query")
+def query_reid(req: ReIDQueryReq):
+    """Query cross-camera vehicle matches for a target embedding vector."""
+    if not g_reid_manager.is_available():
+        raise HTTPException(status_code=503, detail=g_reid_manager.get_status_message())
+    
+    matches = []
+    for gvid, track in g_reid_manager.global_tracks.items():
+        sim = g_reid_manager.compute_cosine_similarity(req.embedding, track["embedding"])
+        if sim >= g_reid_manager.similarity_threshold:
+            matches.append({
+                "global_vehicle_id": gvid,
+                "similarity_score": round(sim, 4),
+                "last_camera_id": track["last_camera_id"],
+                "last_seen_timestamp": track["last_seen_timestamp"]
+            })
+    matches.sort(key=lambda x: x["similarity_score"], reverse=True)
+    return {"query_results": matches[:req.top_k]}
+
 @app.get("/settings")
 def get_settings():
     if not os.path.exists(CONFIG_PATH):
@@ -315,10 +369,13 @@ class SettingsUpdateRequest(BaseModel):
 
 @app.post("/settings/update")
 def update_settings(req: SettingsUpdateRequest):
+    global g_reid_manager, g_settings
     try:
         with open(CONFIG_PATH, "w") as f:
             yaml.safe_dump(req.settings, f, default_flow_style=False)
-        return {"status": "success", "message": "settings.yaml saved."}
+        g_settings = req.settings
+        g_reid_manager = CrossCameraReIDManager(g_settings.get("reid", {}))
+        return {"status": "success", "message": "settings.yaml saved & Re-ID config reloaded."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -394,6 +451,7 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
                     "telemetry": g_system_state["telemetry"],
                     "cameras": g_system_state["cameras"],
                     "metrics": g_system_state["engine_metrics"],
+                    "reid": g_reid_manager.get_system_summary(),
                     "timestamp": time.time()
                 }
             await websocket.send_json(snapshot)
@@ -410,7 +468,6 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
     cam_id = f"cam-phone-{session_id[:6]}"
 
     with g_state_lock:
-        # Check if phone camera node already registered
         existing = [c for c in g_system_state["cameras"] if c.get("session_id") == session_id]
         if not existing:
             phone_cam = {
@@ -450,7 +507,6 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
             battery_val = int(payload.get("battery", 90))
             res_val = payload.get("resolution", "720p")
 
-            # TensorRT FP16 Inference Pipeline Simulation
             detections = [
                 {"track_id": 101, "class": "car", "confidence": 0.94, "box": [100, 80, 220, 140]},
                 {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [260, 110, 180, 130]}

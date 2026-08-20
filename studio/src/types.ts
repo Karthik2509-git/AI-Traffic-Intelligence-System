@@ -9,7 +9,8 @@ export type ActiveTab =
   | 'settings'
   | 'health'
   | 'replay'
-  | 'logs';
+  | 'logs'
+  | 'reid';
 
 export type UserRole = 'Guest' | 'Developer' | 'Administrator';
 

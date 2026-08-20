@@ -11,7 +11,8 @@ import {
   Activity,
   History,
   Terminal,
-  ShieldCheck
+  ShieldCheck,
+  Target
 } from 'lucide-react';
 import type { ActiveTab } from '../types';
 
@@ -25,6 +26,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, engin
   const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: string }[] = [
     { id: 'grid', label: 'Live Video Grid', icon: <Grid size={18} />, badge: '1-32' },
     { id: 'analytics', label: 'Traffic Analytics', icon: <BarChart3 size={18} /> },
+    { id: 'reid', label: 'Cross-Camera Re-ID', icon: <Target size={18} />, badge: 'v3.5' },
     { id: 'signal', label: 'Signal Controller', icon: <TrafficCone size={18} />, badge: 'AUTO' },
     { id: 'automation', label: 'Automation (Flow)', icon: <Zap size={18} /> },
     { id: 'twin', label: '3D Digital Twin', icon: <Box size={18} />, badge: '3D' },
