@@ -10,12 +10,12 @@ Does NOT fabricate values. If dataset files or model files are missing, writes a
 
 import os
 import sys
-import json
 import time
 import argparse
 import numpy as np
 import psutil
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from tools.reid_engine import ONNXReIDFeatureExtractor
 
 RESULTS_PATH = os.path.abspath(
@@ -185,54 +185,96 @@ def main():
 
     print(f"\nExtracted {len(query_files)} query images and {len(test_files)} gallery images.")
     print(f"Discovered Model Embedding Dimension: {extractor.embedding_dim} float")
-    print("Running feature extraction and AP calculation...")
+    print("Running batched feature extraction and AP calculation...")
 
-    # Gallery embeddings
-    gallery_feats = []
+    # Batched Gallery Feature Extraction
+    batch_size = 64
+    gallery_feats_list = []
     gallery_ids = []
     gallery_cams = []
 
     start_infer = time.time()
-    for fname in test_files:
-        pid, cam = parse_veri776_filename(fname)
-        if pid == -1:
-            continue
-        img_path = os.path.join(test_dir, fname)
-        img = cv2.imread(img_path)
-        if img is None:
-            continue
-        feat = extractor.extract(img)
-        if feat is not None:
-            gallery_feats.append(feat)
-            gallery_ids.append(pid)
-            gallery_cams.append(cam)
+    print(f"\n[1/2] Extracting Gallery Features ({len(test_files)} crops)...")
+
+    for i in range(0, len(test_files), batch_size):
+        chunk_files = test_files[i:i + batch_size]
+        chunk_crops = []
+        chunk_pids = []
+        chunk_cams = []
+
+        for fname in chunk_files:
+            pid, cam = parse_veri776_filename(fname)
+            if pid == -1:
+                continue
+            img_path = os.path.join(test_dir, fname)
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+            chunk_crops.append(img)
+            chunk_pids.append(pid)
+            chunk_cams.append(cam)
+
+        if chunk_crops:
+            feats = extractor.extract_batch(chunk_crops)
+            if feats is not None:
+                gallery_feats_list.append(feats)
+                gallery_ids.extend(chunk_pids)
+                gallery_cams.extend(chunk_cams)
+
+        if (i + batch_size) % 1024 < batch_size or (i + batch_size) >= len(test_files):
+            processed = min(i + batch_size, len(test_files))
+            print(f"  [Gallery Progress] {processed} / {len(test_files)} images processed ({processed*100.0/len(test_files):.1f}%)...")
 
     infer_time_ms = (time.time() - start_infer) * 1000.0 / max(1, len(test_files))
 
-    gallery_feats_arr = np.array(gallery_feats, dtype=np.float32)
+    gallery_feats_arr = np.vstack(gallery_feats_list) if gallery_feats_list else np.empty((0, extractor.embedding_dim), dtype=np.float32)
     gallery_ids_arr = np.array(gallery_ids, dtype=np.int32)
     gallery_cams_arr = np.array(gallery_cams, dtype=np.int32)
+
+    # Batched Query Feature Extraction & AP Ranking
+    print(f"\n[2/2] Extracting Query Features & Calculating AP ({len(query_files)} queries)...")
+    query_feats_list = []
+    query_ids = []
+    query_cams = []
+
+    for i in range(0, len(query_files), batch_size):
+        chunk_files = query_files[i:i + batch_size]
+        chunk_crops = []
+        chunk_pids = []
+        chunk_cams = []
+
+        for fname in chunk_files:
+            pid, cam = parse_veri776_filename(fname)
+            if pid == -1:
+                continue
+            img_path = os.path.join(query_dir, fname)
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+            chunk_crops.append(img)
+            chunk_pids.append(pid)
+            chunk_cams.append(cam)
+
+        if chunk_crops:
+            feats = extractor.extract_batch(chunk_crops)
+            if feats is not None:
+                query_feats_list.append(feats)
+                query_ids.extend(chunk_pids)
+                query_cams.extend(chunk_cams)
+
+    query_feats_arr = np.vstack(query_feats_list) if query_feats_list else np.empty((0, extractor.embedding_dim), dtype=np.float32)
 
     aps = []
     r1_list = []
     r5_list = []
 
     start_match = time.time()
-    for fname in query_files:
-        pid, cam = parse_veri776_filename(fname)
-        if pid == -1:
-            continue
-        img_path = os.path.join(query_dir, fname)
-        img = cv2.imread(img_path)
-        if img is None:
-            continue
-        feat = extractor.extract(img)
-        if feat is None:
-            continue
+    for idx in range(len(query_feats_arr)):
+        q_feat = query_feats_arr[idx]
+        pid = query_ids[idx]
+        cam = query_cams[idx]
 
-        q_feat = np.array(feat, dtype=np.float32)
         sims = np.dot(gallery_feats_arr, q_feat) # Both are L2 normalized
-
         ap, r1, r5 = compute_ap(pid, cam, gallery_ids_arr, gallery_cams_arr, sims)
         aps.append(ap)
         r1_list.append(r1)

@@ -89,6 +89,43 @@ class ONNXReIDFeatureExtractor:
             print(f"[ATOS Re-ID Adapter] Extraction error: {e}")
             return None
 
+    def extract_batch(self, crops_bgr: List[np.ndarray]) -> Optional[np.ndarray]:
+        """
+        Runs ImageNet normalization and batch inference for a list of BGR crop images.
+        Returns [B, embedding_dim] float32 numpy array.
+        """
+        if not self.loaded or self.session is None or not crops_bgr:
+            return None
+
+        try:
+            import cv2
+            target_h = self.input_shape[2] if len(self.input_shape) >= 4 else 256
+            target_w = self.input_shape[3] if len(self.input_shape) >= 4 else 256
+
+            batch_tensors = []
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+            for crop in crops_bgr:
+                resized = cv2.resize(crop, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                norm = (rgb - mean) / std
+                tensor_chw = np.transpose(norm, (2, 0, 1))
+                batch_tensors.append(tensor_chw)
+
+            batch_in = np.array(batch_tensors, dtype=np.float32)
+            outputs = self.session.run([self.output_name], {self.input_name: batch_in})
+            vecs = outputs[0]
+
+            # L2 Normalization
+            norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            vecs_norm = vecs / norms
+            return vecs_norm
+        except Exception as e:
+            print(f"[ATOS Re-ID Adapter] Batch extraction error: {e}")
+            return None
+
 
 class CrossCameraReIDManager:
     """
