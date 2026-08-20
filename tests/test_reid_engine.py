@@ -38,10 +38,12 @@ class TestReIDEngine(unittest.TestCase):
         """Test matching logic using synthetic test vectors in unit test scope."""
         mgr = CrossCameraReIDManager({
             "enabled": True,
-            "model_path": "config/settings.yaml", # Uses an existing file to simulate model presence
+            "model_path": "models/reid_vehiclenet.onnx",
             "similarity_threshold": 0.8,
             "max_spatiotemporal_window_sec": 300
         })
+        # Simulate model load in unit test harness
+        mgr.model_loaded = True
         self.assertTrue(mgr.is_available())
 
         vec_car1 = [1.0, 0.5] + [0.0]*510

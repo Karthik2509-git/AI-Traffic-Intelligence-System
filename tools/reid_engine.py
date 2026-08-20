@@ -17,6 +17,78 @@ from typing import List, Dict, Any, Optional
 BENCHMARK_RESULTS_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "runs", "reid_benchmark_results.json")
 )
+READINESS_RESULTS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "runs", "reid_readiness_status.json")
+)
+
+class ONNXReIDFeatureExtractor:
+    """
+    Dynamic ONNX Feature Extractor adapter.
+    Inspects model input/output shapes dynamically from model weights.
+    """
+    def __init__(self, model_path: str):
+        self.model_path = model_path
+        self.session = None
+        self.input_name = None
+        self.output_name = None
+        self.input_shape = [1, 3, 256, 256]
+        self.embedding_dim = 512
+        self.loaded = False
+
+        if os.path.exists(model_path):
+            try:
+                import onnxruntime as ort
+                self.session = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+                self.input_name = self.session.get_inputs()[0].name
+                self.output_name = self.session.get_outputs()[0].name
+                shape = self.session.get_inputs()[0].shape
+                self.input_shape = [s if isinstance(s, int) and s > 0 else 1 for s in shape]
+                
+                out_shape = self.session.get_outputs()[0].shape
+                if len(out_shape) >= 2 and isinstance(out_shape[1], int):
+                    self.embedding_dim = out_shape[1]
+
+                self.loaded = True
+            except Exception as e:
+                print(f"[ATOS Re-ID Adapter] Model load error for {model_path}: {e}")
+
+    def extract(self, crop_bgr: np.ndarray) -> Optional[List[float]]:
+        """
+        Runs ImageNet normalization and forward pass to generate L2 normalized vector.
+        """
+        if not self.loaded or self.session is None:
+            return None
+
+        try:
+            import cv2
+            target_h = self.input_shape[2] if len(self.input_shape) >= 4 else 256
+            target_w = self.input_shape[3] if len(self.input_shape) >= 4 else 256
+
+            # Resize & BGR to RGB
+            resized = cv2.resize(crop_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+            # ImageNet Normalization
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+            normalized = (rgb - mean) / std
+
+            # NCHW Format
+            tensor_in = np.transpose(normalized, (2, 0, 1))[np.newaxis, ...]
+
+            # Forward Inference
+            outputs = self.session.run([self.output_name], {self.input_name: tensor_in})
+            vec = outputs[0][0]
+
+            # L2 Normalization
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            return vec.tolist()
+        except Exception as e:
+            print(f"[ATOS Re-ID Adapter] Extraction error: {e}")
+            return None
+
 
 class CrossCameraReIDManager:
     """
@@ -30,6 +102,7 @@ class CrossCameraReIDManager:
         self.enabled = config.get("enabled", False)
         self.model_path = config.get("model_path", "models/reid_vehiclenet.engine")
         self.similarity_threshold = config.get("similarity_threshold", 0.75)
+        self.uncertainty_threshold = config.get("uncertainty_threshold", 0.60)
         self.embedding_dim = config.get("embedding_dim", 512)
         self.max_window_sec = config.get("max_spatiotemporal_window_sec", 300)
         self.top_k = config.get("top_k_matches", 5)
@@ -38,10 +111,9 @@ class CrossCameraReIDManager:
         self.global_tracks: Dict[str, Dict[str, Any]] = {}
         self.matches_history: List[Dict[str, Any]] = []
 
-        # Check model file availability on disk
-        self.model_loaded = False
-        if self.enabled and os.path.exists(self.model_path):
-            self.model_loaded = True
+        # Feature extractor adapter
+        self.extractor = ONNXReIDFeatureExtractor(self.model_path)
+        self.model_loaded = self.extractor.loaded
 
     def is_available(self) -> bool:
         """Returns True only if reid is enabled in config AND model file exists on disk."""
@@ -85,6 +157,14 @@ class CrossCameraReIDManager:
 
     def get_system_summary(self) -> Dict[str, Any]:
         """Summary object returned to REST API and WebSocket controllers."""
+        readiness_data = {}
+        if os.path.exists(READINESS_RESULTS_PATH):
+            try:
+                with open(READINESS_RESULTS_PATH, "r") as f:
+                    readiness_data = json.load(f)
+            except Exception:
+                pass
+
         return {
             "reid_enabled": self.enabled,
             "model_loaded": self.model_loaded,
@@ -93,7 +173,9 @@ class CrossCameraReIDManager:
             "active_global_tracks": len(self.global_tracks),
             "total_matches_found": len(self.matches_history),
             "similarity_threshold": self.similarity_threshold,
-            "benchmark": self.get_benchmark_results()
+            "uncertainty_threshold": self.uncertainty_threshold,
+            "benchmark": self.get_benchmark_results(),
+            "readiness": readiness_data
         }
 
     def compute_cosine_similarity(self, vec_a: List[float], vec_b: List[float]) -> float:
@@ -116,8 +198,13 @@ class CrossCameraReIDManager:
     ) -> Optional[Dict[str, Any]]:
         """
         Ingests a real vehicle feature embedding and evaluates cross-camera matching.
+        Enforces uncertainty threshold cutoff (similarity >= similarity_threshold). Never forces uncertain matches.
         """
         if not self.is_available():
+            return None
+
+        # Ignore small or invalid crop bounding boxes (<32px)
+        if len(bbox) >= 4 and (bbox[2] < 32 or bbox[3] < 32):
             return None
 
         best_match_id = None
@@ -134,7 +221,8 @@ class CrossCameraReIDManager:
                 continue
 
             sim_score = self.compute_cosine_similarity(embedding, track["embedding"])
-            if sim_score > self.similarity_threshold and sim_score > best_score:
+            # Never force uncertain match below uncertainty threshold (0.60) or target similarity threshold (0.75)
+            if sim_score >= self.similarity_threshold and sim_score > best_score:
                 best_score = sim_score
                 best_match_id = gvid
 
