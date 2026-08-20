@@ -12,6 +12,7 @@ import time
 import socket
 import asyncio
 import threading
+import struct
 import uuid
 from typing import List, Dict, Any, Optional
 
@@ -387,6 +388,174 @@ def udp_telemetry_listener(udp_port: int = 5005):
 
 t_udp = threading.Thread(target=udp_telemetry_listener, daemon=True)
 t_udp.start()
+
+# =========================================================================
+# Phase 2: TCP Binary Vehicle Crop Listener & Re-ID Pipeline Integration
+# =========================================================================
+
+def validate_and_decode_crop_package(
+    meta_bytes: bytes,
+    jpeg_bytes: bytes
+) -> Optional[Dict[str, Any]]:
+    """
+    Validates Phase 2 TCP vehicle crop package and decodes JPEG image buffer into OpenCV BGR numpy array.
+    """
+    if not meta_bytes or not jpeg_bytes:
+        return None
+
+    try:
+        meta = json.loads(meta_bytes.decode("utf-8"))
+    except Exception:
+        return None
+
+    if not isinstance(meta, dict) or meta.get("type") != "vehicle_crop":
+        return None
+
+    track_id = meta.get("track_id")
+    class_id = meta.get("class_id")
+    confidence = meta.get("confidence")
+    bbox = meta.get("bbox")
+    camera_id = meta.get("camera_id")
+    frame_index = meta.get("frame_index")
+    timestamp = meta.get("timestamp")
+
+    if not (isinstance(track_id, int) and track_id >= 0 and
+            isinstance(class_id, int) and class_id in VEHICLE_CLASSES and
+            isinstance(confidence, (int, float)) and 0.50 <= float(confidence) <= 1.0 and
+            isinstance(bbox, list) and len(bbox) == 4 and all(isinstance(x, (int, float)) and x >= 0 for x in bbox) and
+            isinstance(camera_id, str) and camera_id and
+            isinstance(frame_index, (int, float)) and
+            isinstance(timestamp, (int, float))):
+        return None
+
+    try:
+        nparr = np.frombuffer(jpeg_bytes, np.uint8)
+        crop_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if crop_img is None or crop_img.size == 0:
+            return None
+        h, w = crop_img.shape[:2]
+        if w < 32 or h < 32:
+            return None
+    except Exception:
+        return None
+
+    return {
+        "camera_id": camera_id,
+        "frame_index": int(frame_index),
+        "timestamp": float(timestamp),
+        "track_id": int(track_id),
+        "class_id": int(class_id),
+        "confidence": float(confidence),
+        "bbox": [int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])],
+        "crop": crop_img
+    }
+
+def process_production_cpp_crop(crop_obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Processes real C++ vehicle crop through keyframe aggregator & Re-ID engine.
+    Failure-safe: any error or disabled model returns None without disrupting detector/tracker or gateway.
+    """
+    try:
+        if not g_reid_manager.is_available():
+            return None
+
+        cam_id = crop_obj["camera_id"]
+        tid = crop_obj["track_id"]
+        crop_img = crop_obj["crop"]
+        ts = crop_obj["timestamp"]
+        bbox = crop_obj["bbox"]
+        frame_idx = crop_obj["frame_index"]
+
+        if cam_id not in g_aggregators:
+            reid_cfg = g_settings.get("reid", {})
+            g_aggregators[cam_id] = VehicleKeyframeAggregator(
+                sample_interval_frames=int(reid_cfg.get("keyframe_sample_interval", 5)),
+                target_keyframes_per_track=int(reid_cfg.get("keyframe_target_count", 3)),
+                min_confidence=float(reid_cfg.get("crop_min_confidence", 0.5)),
+                min_crop_dim=int(reid_cfg.get("crop_min_size", 32))
+            )
+
+        aggregator = g_aggregators[cam_id]
+        if aggregator.should_sample(tid, frame_idx):
+            emb = g_reid_manager.extractor.extract(crop_img)
+            if emb is not None and len(emb) == 2048:
+                arr = np.array(emb, dtype=np.float32)
+                if np.all(np.isfinite(arr)):
+                    norm = float(np.linalg.norm(arr))
+                    if 0.90 <= norm <= 1.10: # L2 normalization check
+                        payload = aggregator.add_observation(
+                            camera_id=cam_id,
+                            track_id=tid,
+                            embedding=emb,
+                            timestamp=ts,
+                            bbox=bbox,
+                            frame_idx=frame_idx
+                        )
+                        if payload is not None:
+                            return g_reid_manager.process_feature(
+                                camera_id=payload["camera_id"],
+                                local_track_id=payload["local_track_id"],
+                                embedding=payload["embedding"],
+                                timestamp=payload["timestamp"],
+                                bbox=payload["bbox"]
+                            )
+        return None
+    except Exception as e:
+        print(f"[ATOS Re-ID Pipeline] Production C++ crop processing diagnostic: {e}")
+        return None
+
+def tcp_crop_listener(tcp_port: int = 5006):
+    """
+    High-performance TCP stream server receiving C++ vehicle crops.
+    """
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        server_sock.bind(("127.0.0.1", tcp_port))
+        server_sock.listen(5)
+    except Exception as e:
+        print(f"[ATOS Gateway] TCP Crop Socket warning: {e}")
+        return
+
+    def recv_exact(conn, num_bytes):
+        buf = bytearray()
+        while len(buf) < num_bytes:
+            chunk = conn.recv(num_bytes - len(buf))
+            if not chunk:
+                return None
+            buf.extend(chunk)
+        return bytes(buf)
+
+    while True:
+        try:
+            conn, _ = server_sock.accept()
+            while True:
+                header_bytes = recv_exact(conn, 12)
+                if not header_bytes or len(header_bytes) < 12:
+                    break
+                if header_bytes[0:4] != b'CROP':
+                    break
+
+                meta_len = struct.unpack(">I", header_bytes[4:8])[0]
+                img_len = struct.unpack(">I", header_bytes[8:12])[0]
+
+                if meta_len > 65536 or img_len > 10485760: # Limit check (<10MB)
+                    break
+
+                meta_bytes = recv_exact(conn, meta_len)
+                img_bytes = recv_exact(conn, img_len)
+
+                if not meta_bytes or not img_bytes:
+                    break
+
+                decoded = validate_and_decode_crop_package(meta_bytes, img_bytes)
+                if decoded is not None:
+                    process_production_cpp_crop(decoded)
+        except Exception:
+            time.sleep(0.01)
+
+t_tcp = threading.Thread(target=tcp_crop_listener, daemon=True)
+t_tcp.start()
 
 # API Endpoints
 @app.get("/telemetry/tracks")

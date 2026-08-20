@@ -57,5 +57,33 @@ private:
     void closeSocket();
 };
 
+/**
+ * @brief High-performance TCP binary vehicle crop streaming bridge.
+ */
+class CropBridgeSender {
+public:
+    struct Config {
+        std::string target_ip = "127.0.0.1";
+        int target_port = 5006;
+    };
+
+    CropBridgeSender(const Config& config);
+    ~CropBridgeSender();
+
+    /** Transmit encoded vehicle crop and track metadata over TCP loopback. */
+    void sendCrop(const std::string& camera_id, uint64_t frame_index, double timestamp, const traffic::Track& track, const cv::Mat& crop);
+
+private:
+    Config config;
+#ifdef _WIN32
+    SOCKET socket_fd = INVALID_SOCKET;
+#else
+    int socket_fd = -1;
+#endif
+
+    void connectSocket();
+    void closeSocket();
+};
+
 } // namespace simulation
 } // namespace antigravity

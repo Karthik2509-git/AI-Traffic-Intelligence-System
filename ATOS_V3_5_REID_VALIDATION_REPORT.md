@@ -11,9 +11,9 @@
 
 | Tier # | Tier Name | Status | Empirical Evidence & Diagnostic Detail |
 | :---: | :--- | :---: | :--- |
-| **1** | **Implementation Complete** | `PASS` | Live Re-ID pipeline integrated into `web_gateway.py` (`process_camera_frame_reid`), crop utility (`tools/reid_crop_utility.py`), ONNX extractor (`ONNXReIDFeatureExtractor`), Re-ID manager (`CrossCameraReIDManager`), settings (`config/settings.yaml`), and Studio UI (`ReIDDashboard.tsx`). |
-| **2** | **Unit Tests Passing** | `PASS` | Executed `python -m unittest discover -s tests -p "test_*.py"`. **32 / 32 tests passed** (`test_reid_engine.py`, `test_reid_crop_utility.py`, `test_two_camera_reid.py`, `test_reid_production_integration.py`). |
-| **3** | **Integration Validated** | `PASS` | Safe default `reid.enabled: false` verified in `config/settings.yaml`. REST `/reid/status`, `/reid/matches`, `/ws/telemetry` return live Re-ID telemetry. React Studio UI builds with 0 errors. |
+| **1** | **Implementation Complete** | `PASS` | Live C++ → Python track telemetry (UDP 5005) & binary vehicle crop stream (TCP 5006) integrated with `web_gateway.py`, `VehicleKeyframeAggregator`, `ONNXReIDFeatureExtractor`, `CrossCameraReIDManager`, settings (`config/settings.yaml`), and Studio UI (`ReIDDashboard.tsx`). |
+| **2** | **Unit Tests Passing** | `PASS` | Executed `python -m unittest discover -s tests -p "test_*.py"`. **58 / 58 tests passed** (`test_reid_engine.py`, `test_reid_crop_utility.py`, `test_two_camera_reid.py`, `test_reid_production_integration.py`, `test_reid_track_telemetry.py`, `test_reid_crop_transport.py`). |
+| **3** | **Integration Validated** | `PASS` | Safe default `reid.enabled: false` verified in `config/settings.yaml`. REST `/reid/status`, `/reid/matches`, `/telemetry/tracks` return live telemetry. React Studio UI builds with 0 errors. |
 | **4** | **Model Loaded** | `PASS` | Fast-ReID SBS(R50-IBN) fine-tuned ONNX artifact verified at `models/fastreid_sbs_r50_ibn_veri776.onnx` (**89.77 MB**, SHA-256 `bc43d2fd...`). Input: `[1,3,256,256]`, Output: `[1,2048]`. |
 | **5** | **Dataset Prepared** | `PASS` | VeRi-776 dataset verified at `datasets/reid/VeRi`. **51,035 images** (1,678 query / 11,579 gallery / 37,778 train), 776 vehicle identities, 20 cameras. 0 corrupt images. |
 | **6** | **Benchmark Executed** | `PASS` | Executed `python scripts/benchmark_reid.py` on VeRi-776 (1,678 queries / 11,579 gallery). **Inference Cost**: 2.14 ms / crop (CPU ONNX Runtime batched). Results saved to `runs/reid_benchmark_results.json`. |

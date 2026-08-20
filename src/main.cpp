@@ -57,6 +57,7 @@ antigravity::core::ConcurrentQueue<std::shared_ptr<PipelineFrame>> g_captureQueu
 
 std::shared_ptr<antigravity::network::CityController> g_cityController;
 std::shared_ptr<antigravity::simulation::DigitalTwinBridge> g_twinBridge;
+std::shared_ptr<antigravity::simulation::CropBridgeSender> g_cropBridge;
 
 void telemetryWorker() {
     while (g_running) {
@@ -135,6 +136,11 @@ int main(int argc, char** argv) {
         twinConfig.target_port = appConfig.telemetry.target_port;
         g_twinBridge = std::make_shared<antigravity::simulation::DigitalTwinBridge>(twinConfig);
 
+        antigravity::simulation::CropBridgeSender::Config cropConfig;
+        cropConfig.target_ip = appConfig.telemetry.target_ip;
+        cropConfig.target_port = 5006;
+        g_cropBridge = std::make_shared<antigravity::simulation::CropBridgeSender>(cropConfig);
+
         antigravity::engine::Detector::Config detConfig;
         detConfig.engine_path = appConfig.engine.model_path;
         detConfig.input_w = appConfig.engine.input_width;
@@ -188,6 +194,18 @@ int main(int argc, char** argv) {
             double ts = std::chrono::duration<double>(pFrame->captureTimestamp.time_since_epoch()).count();
             if (g_twinBridge) {
                 g_twinBridge->syncTracks("cam-1", pFrame->frameIndex, ts, g_cityController->getActiveTracks());
+            }
+
+            if (g_cropBridge && pFrame->frame.data && !pFrame->frame.empty()) {
+                int fw = pFrame->frame.cols;
+                int fh = pFrame->frame.rows;
+                for (const auto& trk : g_cityController->getActiveTracks()) {
+                    cv::Rect clipped = trk.bbox & cv::Rect(0, 0, fw, fh);
+                    if (clipped.width >= 32 && clipped.height >= 32 && trk.confidence >= 0.50f) {
+                        cv::Mat crop_mat = pFrame->frame(clipped).clone();
+                        g_cropBridge->sendCrop("cam-1", pFrame->frameIndex, ts, trk, crop_mat);
+                    }
+                }
             }
 
             auto now = std::chrono::steady_clock::now();
