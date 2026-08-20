@@ -185,6 +185,11 @@ int main(int argc, char** argv) {
 
             g_cityController->updateTracks(pFrame->results);
 
+            double ts = std::chrono::duration<double>(pFrame->captureTimestamp.time_since_epoch()).count();
+            if (g_twinBridge) {
+                g_twinBridge->syncTracks("cam-1", pFrame->frameIndex, ts, g_cityController->getActiveTracks());
+            }
+
             auto now = std::chrono::steady_clock::now();
             double latency = std::chrono::duration<double, std::milli>(now - pFrame->captureTimestamp).count();
 

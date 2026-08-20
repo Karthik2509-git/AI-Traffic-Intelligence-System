@@ -263,6 +263,60 @@ def discover_plugins():
 
 discover_plugins()
 
+VEHICLE_CLASSES = {2, 3, 5, 7} # COCO car, motorcycle, bus, truck
+
+def validate_and_parse_track_telemetry(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Validates Phase 1 track_telemetry UDP schema.
+    Returns parsed dictionary if valid, or None if malformed.
+    """
+    if not isinstance(payload, dict) or payload.get("type") != "track_telemetry":
+        return None
+
+    camera_id = payload.get("camera_id")
+    frame_index = payload.get("frame_index")
+    timestamp = payload.get("timestamp")
+    tracks = payload.get("tracks")
+
+    if not (isinstance(camera_id, str) and camera_id and
+            isinstance(frame_index, (int, float)) and
+            isinstance(timestamp, (int, float)) and
+            isinstance(tracks, list)):
+        return None
+
+    valid_tracks = []
+    for trk in tracks:
+        if not isinstance(trk, dict):
+            continue
+        track_id = trk.get("track_id")
+        class_id = trk.get("class_id")
+        confidence = trk.get("confidence")
+        bbox = trk.get("bbox")
+
+        # Strict field validation
+        if not (isinstance(track_id, int) and track_id >= 0):
+            continue
+        if not (isinstance(class_id, int) and class_id in VEHICLE_CLASSES):
+            continue
+        if not (isinstance(confidence, (int, float)) and 0.0 <= float(confidence) <= 1.0):
+            continue
+        if not (isinstance(bbox, list) and len(bbox) == 4 and all(isinstance(x, (int, float)) and x >= 0 for x in bbox)):
+            continue
+
+        valid_tracks.append({
+            "track_id": int(track_id),
+            "class_id": int(class_id),
+            "confidence": float(confidence),
+            "bbox": [int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])]
+        })
+
+    return {
+        "camera_id": camera_id,
+        "frame_index": int(frame_index),
+        "timestamp": float(timestamp),
+        "tracks": valid_tracks
+    }
+
 def udp_telemetry_listener(udp_port: int = 5005):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -278,10 +332,9 @@ def udp_telemetry_listener(udp_port: int = 5005):
             now = time.time()
 
             with g_state_lock:
-                g_system_state["last_udp_packet"] = now
-                g_system_state["engine_status"] = "online"
-
                 if payload.get("type") == "city_pulse":
+                    g_system_state["last_udp_packet"] = now
+                    g_system_state["engine_status"] = "online"
                     g_system_state["telemetry"]["pressure"] = float(payload.get("pressure", 0.0))
                     g_system_state["telemetry"]["signal_phase"] = int(payload.get("signal_phase", 0))
                     g_system_state["telemetry"]["vehicles"] = int(payload.get("vehicles", 0))
@@ -298,7 +351,19 @@ def udp_telemetry_listener(udp_port: int = 5005):
                     if len(g_system_state["analytics_history"]) > 60:
                         g_system_state["analytics_history"].pop(0)
 
+                elif payload.get("type") == "track_telemetry":
+                    parsed = validate_and_parse_track_telemetry(payload)
+                    if parsed is not None:
+                        g_system_state["last_udp_packet"] = now
+                        g_system_state["engine_status"] = "online"
+                        g_system_state["real_track_telemetry"] = parsed
+                        g_system_state["telemetry"]["active_cpp_tracks"] = len(parsed["tracks"])
+                    else:
+                        print(f"[ATOS Gateway] Malformed track_telemetry packet rejected: {payload}")
+
                 elif payload.get("type") == "incident_alert":
+                    g_system_state["last_udp_packet"] = now
+                    g_system_state["engine_status"] = "online"
                     alert_entry = {
                         "id": f"alert-{int(now * 1000)}",
                         "category": payload.get("category", "Incident"),
@@ -316,6 +381,7 @@ def udp_telemetry_listener(udp_port: int = 5005):
                     g_system_state["engine_status"] = "waiting_for_engine"
                     g_system_state["telemetry"]["fps"] = 0.0
                     g_system_state["telemetry"]["latency_ms"] = 0.0
+                    g_system_state["real_track_telemetry"] = None
         except Exception:
             time.sleep(0.01)
 
@@ -323,6 +389,13 @@ t_udp = threading.Thread(target=udp_telemetry_listener, daemon=True)
 t_udp.start()
 
 # API Endpoints
+@app.get("/telemetry/tracks")
+def get_real_track_telemetry():
+    with g_state_lock:
+        return {
+            "status": g_system_state["engine_status"],
+            "track_telemetry": g_system_state.get("real_track_telemetry")
+        }
 @app.get("/api/local-ip")
 def get_ip():
     all_ips = get_all_lan_ips()

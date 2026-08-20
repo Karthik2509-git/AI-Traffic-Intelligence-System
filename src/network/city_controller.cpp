@@ -108,5 +108,10 @@ int CityController::getVehicleCount() const {
     return vehicle_count;
 }
 
+std::vector<::traffic::Track> CityController::getActiveTracks() const {
+    std::lock_guard<std::mutex> lock(mtx);
+    return track_history;
+}
+
 } // namespace network
 } // namespace antigravity

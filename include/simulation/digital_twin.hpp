@@ -42,6 +42,9 @@ public:
     /** Broadcast an incident alert via UDP. */
     void broadcastIncident(const std::string& incident_type, int nodeId);
 
+    /** Send real-time vehicle track telemetry via UDP. */
+    void syncTracks(const std::string& camera_id, uint64_t frame_index, double timestamp, const std::vector<traffic::Track>& tracks);
+
 private:
     Config config;
 #ifdef _WIN32

@@ -32,6 +32,9 @@ public:
     /** Get the last detection count. */
     int getVehicleCount() const;
 
+    /** Get active persistent vehicle tracks. */
+    std::vector<::traffic::Track> getActiveTracks() const;
+
 private:
     std::shared_ptr<RoadGraph> graph;
     std::shared_ptr<control::SignalController> signal_controller;
