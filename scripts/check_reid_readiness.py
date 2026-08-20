@@ -22,6 +22,32 @@ def parse_args():
                         help="Path to dataset root folder")
     return parser.parse_args()
 
+def resolve_dataset_dir(target_dir: str) -> str:
+    """
+    Dynamically resolves dataset path across potential directory structures:
+    1. Direct target_dir
+    2. Child folder 'VeRi' under target_dir
+    3. Sibling folder 'VeRi' under parent directory (e.g. datasets/reid/VeRi)
+    """
+    abs_path = os.path.abspath(target_dir)
+
+    # Check direct path
+    if os.path.exists(os.path.join(abs_path, "image_query")) or os.path.exists(os.path.join(abs_path, "image_test")):
+        return abs_path
+
+    # Check child 'VeRi'
+    child_veri = os.path.join(abs_path, "VeRi")
+    if os.path.exists(os.path.join(child_veri, "image_query")) or os.path.exists(os.path.join(child_veri, "image_test")):
+        return child_veri
+
+    # Check sibling 'VeRi' under parent directory
+    parent_dir = os.path.dirname(abs_path)
+    sibling_veri = os.path.join(parent_dir, "VeRi")
+    if os.path.exists(os.path.join(sibling_veri, "image_query")) or os.path.exists(os.path.join(sibling_veri, "image_test")):
+        return sibling_veri
+
+    return abs_path
+
 def compute_sha256(filepath: str) -> str:
     """Calculates SHA-256 checksum of a file."""
     sha256_hash = hashlib.sha256()
@@ -89,26 +115,28 @@ def check_model_integrity(model_path: str) -> Dict[str, Any]:
         "diagnostic": f"Model file verified ({round(file_size/(1024*1024),2)} MB)."
     }
 
-def check_dataset_integrity(dataset_dir: str) -> Dict[str, Any]:
+def check_dataset_integrity(raw_dataset_dir: str) -> Dict[str, Any]:
     """Inspects dataset presence, image counts, unique identities, and camera channels."""
-    abs_path = os.path.abspath(dataset_dir)
-    query_dir = os.path.join(abs_path, "image_query")
-    test_dir = os.path.join(abs_path, "image_test")
-    train_dir = os.path.join(abs_path, "image_train")
+    resolved_path = resolve_dataset_dir(raw_dataset_dir)
+    query_dir = os.path.join(resolved_path, "image_query")
+    test_dir = os.path.join(resolved_path, "image_test")
+    train_dir = os.path.join(resolved_path, "image_train")
 
-    if not (os.path.exists(abs_path) and (os.path.exists(query_dir) or os.path.exists(test_dir))):
+    if not (os.path.exists(resolved_path) and (os.path.exists(query_dir) or os.path.exists(test_dir))):
         return {
             "dataset_present": False,
             "status": "DATASET_FILES_MISSING",
-            "dataset_path": dataset_dir,
+            "dataset_path": raw_dataset_dir,
+            "resolved_path": resolved_path,
             "total_images": 0,
             "query_images": 0,
             "gallery_images": 0,
+            "train_images": 0,
             "num_identities": 0,
             "num_cameras": 0,
             "missing_files": ["image_query/", "image_test/"],
             "annotation_availability": False,
-            "diagnostic": f"Dataset files missing in {abs_path}. Refer to datasets/reid/README.md for download instructions."
+            "diagnostic": f"Dataset files missing in {resolved_path}. Refer to datasets/reid/README.md for download instructions."
         }
 
     query_imgs = [f for f in os.listdir(query_dir) if f.endswith(('.jpg', '.png'))] if os.path.exists(query_dir) else []
@@ -126,10 +154,13 @@ def check_dataset_integrity(dataset_dir: str) -> Dict[str, Any]:
             unique_pids.add(parts[0])
             unique_cams.add(parts[1])
 
+    rel_path = os.path.relpath(resolved_path, os.getcwd()) if os.path.isabs(resolved_path) else resolved_path
+
     return {
         "dataset_present": True,
-        "status": "DATASET_FILES_PRESENT",
-        "dataset_path": dataset_dir,
+        "status": "READY",
+        "dataset_path": rel_path.replace('\\', '/'),
+        "resolved_path": resolved_path,
         "total_images": len(all_files),
         "query_images": len(query_imgs),
         "gallery_images": len(gallery_imgs),
@@ -167,6 +198,7 @@ def main():
     print(f"Total Images      : {dataset_res['total_images']}")
     print(f"Query Images      : {dataset_res['query_images']}")
     print(f"Gallery Images    : {dataset_res['gallery_images']}")
+    print(f"Train Images      : {dataset_res['train_images']}")
     print(f"Unique Identities : {dataset_res['num_identities']}")
     print(f"Unique Cameras    : {dataset_res['num_cameras']}")
 

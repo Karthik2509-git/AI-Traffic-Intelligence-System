@@ -33,6 +33,29 @@ def parse_args():
                         help="Path to trained Re-ID model weights (.onnx or .engine)")
     return parser.parse_args()
 
+def resolve_dataset_dir(target_dir: str) -> str:
+    """
+    Dynamically resolves dataset path across potential directory structures:
+    1. Direct target_dir
+    2. Child folder 'VeRi' under target_dir
+    3. Sibling folder 'VeRi' under parent directory (e.g. datasets/reid/VeRi)
+    """
+    abs_path = os.path.abspath(target_dir)
+
+    if os.path.exists(os.path.join(abs_path, "image_query")) or os.path.exists(os.path.join(abs_path, "image_test")):
+        return abs_path
+
+    child_veri = os.path.join(abs_path, "VeRi")
+    if os.path.exists(os.path.join(child_veri, "image_query")) or os.path.exists(os.path.join(child_veri, "image_test")):
+        return child_veri
+
+    parent_dir = os.path.dirname(abs_path)
+    sibling_veri = os.path.join(parent_dir, "VeRi")
+    if os.path.exists(os.path.join(sibling_veri, "image_query")) or os.path.exists(os.path.join(sibling_veri, "image_test")):
+        return sibling_veri
+
+    return abs_path
+
 def parse_veri776_filename(filename: str):
     """
     Parses VeRi-776 filename format: 0001_c001_00026030_0.jpg
@@ -80,27 +103,28 @@ def compute_ap(query_id: int, query_cam: int, gallery_ids: np.ndarray, gallery_c
 
 def main():
     args = parse_args()
+    resolved_path = resolve_dataset_dir(args.dataset_dir)
+
     print(f"==================================================")
     print(f"ATOS v3.5 Re-ID Empirical Benchmark Runner")
     print(f"Target Dataset : {args.dataset}")
-    print(f"Dataset Path   : {args.dataset_dir}")
+    print(f"Dataset Path   : {resolved_path}")
     print(f"Model Path     : {args.model}")
     print(f"==================================================")
 
-    dataset_abs_path = os.path.abspath(args.dataset_dir)
-    query_dir = os.path.join(dataset_abs_path, "image_query")
-    test_dir = os.path.join(dataset_abs_path, "image_test")
+    query_dir = os.path.join(resolved_path, "image_query")
+    test_dir = os.path.join(resolved_path, "image_test")
 
     # Verify if dataset directory and required test folders exist
     if not (os.path.exists(query_dir) and os.path.exists(test_dir)):
-        print(f"\n[NOTICE] Dataset files not found at: {dataset_abs_path}")
+        print(f"\n[NOTICE] Dataset files not found at: {resolved_path}")
         print("Market-1501 is excluded. For vehicle Re-ID, please download VeRi-776 or CityFlow-ReID.")
         print("Refer to datasets/reid/README.md for download instructions and licensing details.")
 
         missing_res = {
             "status": "dataset_missing",
             "evaluated": False,
-            "message": f"Dataset files not found in {args.dataset_dir}. Download instructions in datasets/reid/README.md.",
+            "message": f"Dataset files not found in {resolved_path}. Download instructions in datasets/reid/README.md.",
             "rank1": None,
             "rank5": None,
             "mAP": None,
