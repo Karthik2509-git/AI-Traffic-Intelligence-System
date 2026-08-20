@@ -18,9 +18,10 @@ detection:
 # Cross-Camera Vehicle Re-Identification (Re-ID) Subsystem
 reid:
   enabled: false # Default safe fallback (disabled until model is validated)
-  model_path: "models/reid_vehiclenet.engine"
+  model_path: "models/fastreid_resnet50_veri776.onnx" # Explicit primary model path
+  fallback_model_path: "models/torchreid_osnet_x1_0_veri776.onnx" # Explicit fallback model path
   similarity_threshold: 0.75
-  embedding_dim: 512
+  uncertainty_threshold: 0.60
   max_spatiotemporal_window_sec: 300
   top_k_matches: 5
 

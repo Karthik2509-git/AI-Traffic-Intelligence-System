@@ -29,7 +29,7 @@ def parse_args():
                         help="Target vehicle Re-ID dataset")
     parser.add_argument("--dataset-dir", type=str, default="datasets/reid/veri776",
                         help="Path to dataset root folder")
-    parser.add_argument("--model", type=str, default="models/reid_vehiclenet.onnx",
+    parser.add_argument("--model", type=str, default="models/fastreid_resnet50_veri776.onnx",
                         help="Path to trained Re-ID model weights (.onnx or .engine)")
     return parser.parse_args()
 
@@ -160,6 +160,7 @@ def main():
     test_files = [f for f in os.listdir(test_dir) if f.endswith(('.jpg', '.png'))]
 
     print(f"\nExtracted {len(query_files)} query images and {len(test_files)} gallery images.")
+    print(f"Discovered Model Embedding Dimension: {extractor.embedding_dim} float")
     print("Running feature extraction and AP calculation...")
 
     # Gallery embeddings
@@ -231,6 +232,7 @@ def main():
         "matching_ms": round(matching_time_ms, 2),
         "vram_used_mb": round(psutil.virtual_memory().used / (1024*1024), 2),
         "dataset_name": args.dataset,
+        "embedding_dim": extractor.embedding_dim,
         "num_queries": len(query_files),
         "num_gallery": len(test_files),
         "hardware": f"{psutil.cpu_percent()}% CPU • {psutil.virtual_memory().percent}% RAM",
@@ -241,6 +243,7 @@ def main():
         json.dump(eval_res, f, indent=2)
 
     print(f"\n[SUCCESS] Empirical Evaluation Complete!")
+    print(f"  Model Output Dim: {extractor.embedding_dim} float")
     print(f"  Rank-1 Accuracy : {mean_r1*100:.2f}%")
     print(f"  Rank-5 Accuracy : {mean_r5*100:.2f}%")
     print(f"  mAP Score       : {mean_ap*100:.2f}%")

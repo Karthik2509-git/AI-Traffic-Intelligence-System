@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional
 
 def parse_args():
     parser = argparse.ArgumentParser(description="ATOS Re-ID Model & Dataset Integrity Checker")
-    parser.add_argument("--model", type=str, default="models/reid_vehiclenet.onnx",
+    parser.add_argument("--model", type=str, default="models/fastreid_resnet50_veri776.onnx",
                         help="Path to Re-ID model file (.onnx or .engine)")
     parser.add_argument("--dataset-dir", type=str, default="datasets/reid/veri776",
                         help="Path to dataset root folder")
@@ -55,17 +55,14 @@ def check_model_integrity(model_path: str) -> Dict[str, Any]:
     embedding_dim = None
     runtime_compat = "UNTESTED"
 
-    # Attempt ONNX model inspection if onnx is available
     try:
         import onnx
         onnx_model = onnx.load(abs_path)
         onnx.checker.check_model(onnx_model)
         
-        # Extract input dimensions
         inp = onnx_model.graph.input[0]
         input_shape = [dim.dim_value if dim.dim_value > 0 else 1 for dim in inp.type.tensor_type.shape.dim]
         
-        # Extract output dimensions
         out = onnx_model.graph.output[0]
         output_shape = [dim.dim_value if dim.dim_value > 0 else 1 for dim in out.type.tensor_type.shape.dim]
         if len(output_shape) >= 2:
@@ -84,9 +81,9 @@ def check_model_integrity(model_path: str) -> Dict[str, Any]:
         "file_size_bytes": file_size,
         "file_size_mb": round(file_size / (1024 * 1024), 2),
         "sha256": sha256_val,
-        "input_tensor_shape": input_shape or [1, 3, 256, 256],
-        "output_tensor_shape": output_shape or [1, 512],
-        "embedding_dim": embedding_dim or 512,
+        "input_tensor_shape": input_shape,
+        "output_tensor_shape": output_shape,
+        "embedding_dim": embedding_dim,
         "precision": "FP32/FP16",
         "runtime_compatibility": runtime_compat,
         "diagnostic": f"Model file verified ({round(file_size/(1024*1024),2)} MB)."
