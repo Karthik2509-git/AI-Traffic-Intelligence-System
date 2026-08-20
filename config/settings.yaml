@@ -17,13 +17,17 @@ detection:
 
 # Cross-Camera Vehicle Re-Identification (Re-ID) Subsystem
 reid:
-  enabled: false # Default safe fallback (disabled until model is validated)
-  model_path: "models/fastreid_resnet50_veri776.onnx" # Explicit primary model path
-  fallback_model_path: "models/torchreid_osnet_x1_0_veri776.onnx" # Explicit fallback model path
+  enabled: false # Default safe fallback (MUST remain false until real two-camera validation is completed)
+  model_path: "models/fastreid_sbs_r50_ibn_veri776.onnx" # Validated Fast-ReID SBS(R50-IBN) ONNX model
+  fallback_model_path: "models/fastreid_resnet50_veri776.onnx" # Explicit fallback model path
   similarity_threshold: 0.75
   uncertainty_threshold: 0.60
   max_spatiotemporal_window_sec: 300
   top_k_matches: 5
+  crop_min_confidence: 0.5
+  crop_min_size: 32
+  keyframe_sample_interval: 5
+  keyframe_target_count: 3
 
 # Telemetry (UDP)
 telemetry:

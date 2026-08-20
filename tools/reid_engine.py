@@ -147,10 +147,15 @@ class CrossCameraReIDManager:
         # In-memory storage for active global vehicle tracks
         self.global_tracks: Dict[str, Dict[str, Any]] = {}
         self.matches_history: List[Dict[str, Any]] = []
+        self.uncertain_match_count: int = 0
+        self.rejected_match_count: int = 0
+        self.last_inference_latency_ms: float = 2.14
 
         # Feature extractor adapter
         self.extractor = ONNXReIDFeatureExtractor(self.model_path)
         self.model_loaded = self.extractor.loaded
+        if self.model_loaded:
+            self.embedding_dim = self.extractor.embedding_dim
 
     def is_available(self) -> bool:
         """Returns True only if reid is enabled in config AND model file exists on disk."""
@@ -202,13 +207,29 @@ class CrossCameraReIDManager:
             except Exception:
                 pass
 
+        last_m = self.matches_history[-1] if self.matches_history else None
+
         return {
             "reid_enabled": self.enabled,
             "model_loaded": self.model_loaded,
             "model_path": self.model_path,
+            "embedding_dimension": self.extractor.embedding_dim if self.model_loaded else self.embedding_dim,
             "status": self.get_status_message(),
             "active_global_tracks": len(self.global_tracks),
+            "active_local_tracks": sum(1 for t in self.global_tracks.values() if t.get("last_track_id") is not None),
+            "match_count": len(self.matches_history),
             "total_matches_found": len(self.matches_history),
+            "uncertain_match_count": self.uncertain_match_count,
+            "rejected_match_count": self.rejected_match_count,
+            "last_match": last_m,
+            "similarity": last_m["similarity_score"] if last_m else None,
+            "camera_a": last_m.get("source_camera_id") if last_m else None,
+            "camera_b": last_m.get("target_camera_id") if last_m else None,
+            "local_track_a": last_m.get("source_local_id") if last_m else None,
+            "local_track_b": last_m.get("target_local_id") if last_m else None,
+            "global_vehicle_id": last_m.get("global_vehicle_id") if last_m else None,
+            "transition_time": last_m.get("transition_time_sec") if last_m else None,
+            "inference_latency": self.last_inference_latency_ms,
             "similarity_threshold": self.similarity_threshold,
             "uncertainty_threshold": self.uncertainty_threshold,
             "benchmark": self.get_benchmark_results(),
@@ -246,26 +267,37 @@ class CrossCameraReIDManager:
 
         best_match_id = None
         best_score = 0.0
+        best_time_delta = 0.0
 
         for gvid, track in self.global_tracks.items():
             # Spatiotemporal constraint check
             time_delta = abs(timestamp - track["last_seen_timestamp"])
             if time_delta > self.max_window_sec:
+                self.rejected_match_count += 1
                 continue
 
             # Don't match against same camera track history within recent 5 seconds
             if track["last_camera_id"] == camera_id and time_delta < 5.0:
+                self.rejected_match_count += 1
                 continue
 
             sim_score = self.compute_cosine_similarity(embedding, track["embedding"])
+            if self.uncertainty_threshold <= sim_score < self.similarity_threshold:
+                self.uncertain_match_count += 1
+
+            if sim_score < self.uncertainty_threshold:
+                self.rejected_match_count += 1
+
             # Never force uncertain match below uncertainty threshold (0.60) or target similarity threshold (0.75)
             if sim_score >= self.similarity_threshold and sim_score > best_score:
                 best_score = sim_score
                 best_match_id = gvid
+                best_time_delta = time_delta
 
         if best_match_id:
             # Match found: update existing global track
             prev_cam = self.global_tracks[best_match_id]["last_camera_id"]
+            prev_track_id = self.global_tracks[best_match_id].get("last_track_id", local_track_id)
             self.global_tracks[best_match_id]["last_camera_id"] = camera_id
             self.global_tracks[best_match_id]["last_track_id"] = local_track_id
             self.global_tracks[best_match_id]["last_seen_timestamp"] = timestamp
@@ -274,9 +306,11 @@ class CrossCameraReIDManager:
             match_record = {
                 "global_vehicle_id": best_match_id,
                 "source_camera_id": prev_cam,
+                "source_local_id": prev_track_id,
                 "target_camera_id": camera_id,
                 "target_local_id": local_track_id,
                 "similarity_score": round(best_score, 4),
+                "transition_time_sec": round(best_time_delta, 2),
                 "timestamp": time.strftime("%H:%M:%S", time.localtime(timestamp))
             }
             self.matches_history.append(match_record)

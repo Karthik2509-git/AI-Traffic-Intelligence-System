@@ -23,7 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse, Response
 from pydantic import BaseModel
 
+import base64
+import cv2
+import numpy as np
+
 from tools.reid_engine import CrossCameraReIDManager
+from tools.reid_crop_utility import extract_vehicle_crops, VehicleKeyframeAggregator
 
 app = FastAPI(
     title="ATOS Studio Visual Intelligence OS API",
@@ -56,6 +61,82 @@ def load_settings_dict():
 
 g_settings = load_settings_dict()
 g_reid_manager = CrossCameraReIDManager(g_settings.get("reid", {}))
+g_aggregators: Dict[str, VehicleKeyframeAggregator] = {}
+
+def process_camera_frame_reid(
+    camera_id: str,
+    frame: np.ndarray,
+    detections: List[Dict[str, Any]],
+    timestamp: Optional[float] = None
+) -> List[Dict[str, Any]]:
+    """
+    Processes vehicle crop extraction, keyframe feature aggregation, ONNX Re-ID embedding, and GVID correlation.
+    Strictly wrapped in failure safety: any error or missing model logs diagnostic and lets YOLOv8 + ByteTrack continue cleanly.
+    """
+    if timestamp is None:
+        timestamp = time.time()
+
+    if not g_reid_manager.is_available():
+        return []
+
+    if frame is None or frame.size == 0 or not detections:
+        return []
+
+    try:
+        if camera_id not in g_aggregators:
+            reid_cfg = g_settings.get("reid", {})
+            g_aggregators[camera_id] = VehicleKeyframeAggregator(
+                sample_interval_frames=int(reid_cfg.get("keyframe_sample_interval", 5)),
+                target_keyframes_per_track=int(reid_cfg.get("keyframe_target_count", 3)),
+                min_confidence=float(reid_cfg.get("crop_min_confidence", 0.5)),
+                min_crop_dim=int(reid_cfg.get("crop_min_size", 32))
+            )
+
+        aggregator = g_aggregators[camera_id]
+        reid_cfg = g_settings.get("reid", {})
+        min_conf = float(reid_cfg.get("crop_min_confidence", 0.5))
+        min_size = int(reid_cfg.get("crop_min_size", 32))
+
+        # Extract crops safely using reid_crop_utility
+        crops = extract_vehicle_crops(frame, detections, min_confidence=min_conf, min_dim=min_size)
+        matches = []
+        frame_idx = int(timestamp * 30)
+
+        for crop_obj in crops:
+            tid = crop_obj["track_id"]
+            if tid < 0:
+                continue
+
+            if aggregator.should_sample(tid, frame_idx):
+                emb = g_reid_manager.extractor.extract(crop_obj["crop"])
+                if emb is not None and len(emb) == 2048:
+                    arr = np.array(emb, dtype=np.float32)
+                    if np.all(np.isfinite(arr)):
+                        norm = float(np.linalg.norm(arr))
+                        if 0.90 <= norm <= 1.10: # L2 normalized vector check
+                            payload = aggregator.add_observation(
+                                camera_id=camera_id,
+                                track_id=tid,
+                                embedding=emb,
+                                timestamp=timestamp,
+                                bbox=crop_obj["box"],
+                                frame_idx=frame_idx,
+                                cls_name=crop_obj["class"]
+                            )
+                            if payload is not None:
+                                match_rec = g_reid_manager.process_feature(
+                                    camera_id=payload["camera_id"],
+                                    local_track_id=payload["local_track_id"],
+                                    embedding=payload["embedding"],
+                                    timestamp=payload["timestamp"],
+                                    bbox=payload["bbox"]
+                                )
+                                if match_rec:
+                                    matches.append(match_rec)
+        return matches
+    except Exception as e:
+        print(f"[ATOS Re-ID Pipeline] Re-ID unavailable — continuing detection/tracking: {e}")
+        return []
 
 g_state_lock = threading.Lock()
 
@@ -369,12 +450,13 @@ class SettingsUpdateRequest(BaseModel):
 
 @app.post("/settings/update")
 def update_settings(req: SettingsUpdateRequest):
-    global g_reid_manager, g_settings
+    global g_reid_manager, g_settings, g_aggregators
     try:
         with open(CONFIG_PATH, "w") as f:
             yaml.safe_dump(req.settings, f, default_flow_style=False)
         g_settings = req.settings
         g_reid_manager = CrossCameraReIDManager(g_settings.get("reid", {}))
+        g_aggregators.clear()
         return {"status": "success", "message": "settings.yaml saved & Re-ID config reloaded."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -428,15 +510,33 @@ def disconnect_camera(camera_id: str = Body(..., embed=True)):
 
 @app.post("/api/frame")
 def process_frame(payload: Dict[str, Any] = Body(...)):
+    camera_id = payload.get("camera_id", "cam-1")
+    img_base64 = payload.get("image") or payload.get("frame_base64")
+    detections = payload.get("detections", [
+        {"track_id": 101, "class": "car", "confidence": 0.94, "box": [120, 180, 240, 160]},
+        {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [450, 220, 300, 200]}
+    ])
+
+    reid_matches = []
+    if img_base64:
+        try:
+            b64_str = img_base64.split(",", 1)[1] if "," in img_base64 else img_base64
+            img_bytes = base64.b64decode(b64_str)
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            frame_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame_img is not None:
+                reid_matches = process_camera_frame_reid(camera_id, frame_img, detections, timestamp=time.time())
+        except Exception as e:
+            print(f"[Gateway] Frame image decode error: {e}")
+
     with g_state_lock:
         return {
             "status": "processed",
             "fps": 30.0,
             "latency_ms": 8.4,
-            "detections": [
-                {"track_id": 101, "class": "car", "confidence": 0.94, "box": [120, 180, 240, 160]},
-                {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [450, 220, 300, 200]}
-            ]
+            "detections": detections,
+            "reid_matches": reid_matches,
+            "reid_status": g_reid_manager.get_status_message()
         }
 
 # Real-Time Telemetry WebSocket
@@ -507,10 +607,22 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
             battery_val = int(payload.get("battery", 90))
             res_val = payload.get("resolution", "720p")
 
-            detections = [
+            detections = payload.get("detections", [
                 {"track_id": 101, "class": "car", "confidence": 0.94, "box": [100, 80, 220, 140]},
                 {"track_id": 102, "class": "bus", "confidence": 0.88, "box": [260, 110, 180, 130]}
-            ]
+            ])
+
+            reid_matches = []
+            if img_base64:
+                try:
+                    b64_str = img_base64.split(",", 1)[1] if "," in img_base64 else img_base64
+                    img_bytes = base64.b64decode(b64_str)
+                    nparr = np.frombuffer(img_bytes, np.uint8)
+                    frame_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    if frame_img is not None and detections:
+                        reid_matches = process_camera_frame_reid(cam_id, frame_img, detections, timestamp=time.time())
+                except Exception as e:
+                    print(f"[Mobile Stream] Frame image decode exception: {e}")
 
             with g_state_lock:
                 g_system_state["engine_status"] = "online"
@@ -533,7 +645,8 @@ async def mobile_stream_endpoint(websocket: WebSocket, session_id: str):
                 "session_id": session_id,
                 "latency_ms": 7.2,
                 "fps": fps_val,
-                "detections": detections
+                "detections": detections,
+                "reid_matches": reid_matches
             }
             await websocket.send_json(reply)
     except WebSocketDisconnect:
