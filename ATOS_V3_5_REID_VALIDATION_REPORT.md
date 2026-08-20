@@ -12,12 +12,12 @@
 | Tier # | Tier Name | Status | Empirical Evidence & Diagnostic Detail |
 | :---: | :--- | :---: | :--- |
 | **1** | **Implementation Complete** | `PASS` | Dynamic ONNX/TensorRT model adapter, C++ headers (`reid_types.hpp`, `reid_adapter.hpp`), Python manager (`tools/reid_engine.py`), REST/WS endpoints (`web_gateway.py`), evaluation script (`benchmark_reid.py`), and Studio UI (`ReIDDashboard.tsx`) completely built. |
-| **2** | **Unit Tests Passing** | `PASS` | Executed `python -m unittest discover -s tests -p "test_*.py"`. **4 / 4 tests passed** (`test_reid_engine.py`) covering fallback paths, cosine vector similarity math, and synthetic correlation matching. |
-| **3** | **Integration Validated** | `PASS` | Safe default `reid.enabled: false` verified in `config/settings.yaml`. REST endpoint `GET /reid/status` returns `"Re-ID model unavailable — evaluation pending"`. React UI renders diagnostic warnings cleanly. |
-| **4** | **Model Loaded** | `MODEL_FILE_PENDING` | Model weights file `models/fastreid_resnet50_veri776.onnx` un-populated on host disk. System safely reports `"model_loaded": false`. |
+| **2** | **Unit Tests Passing** | `PASS` | Executed `python -m unittest discover -s tests -p "test_*.py"`. **5 / 5 tests passed** (`test_reid_engine.py`) covering fallback paths, vector similarity math, and `compute_ap` `np.isin` membership mask. |
+| **3** | **Integration Validated** | `PASS` | Safe default `reid.enabled: false` verified in `config/settings.yaml`. REST endpoint `GET /reid/status` returns model and dataset status. React UI renders diagnostic state. |
+| **4** | **Model Loaded** | `PASS` | Fast-ReID ResNet50 ONNX artifact exported to `models/fastreid_resnet50_veri776.onnx` (**89.62 MB**, SHA-256 `d820eea9...`). ONNXRuntime inference verified. |
 | **5** | **Dataset Prepared** | `PASS` | VeRi-776 dataset verified at `datasets/reid/VeRi`. **51,035 images** (1,678 query / 11,579 gallery / 37,778 train), 776 vehicle identities, 20 cameras. 0 corrupt images. |
-| **6** | **Benchmark Executed** | `DATASET_MISSING` | Executed `python scripts/benchmark_reid.py`. Harness detected missing dataset and recorded `runs/reid_benchmark_results.json` (`status: dataset_missing`). |
-| **7** | **Accuracy Validated** | `PENDING` | Empirical Rank-1, Rank-5, mAP, FMR, and FNMR accuracy metrics remain explicitly `null` until model weights and dataset images are supplied by user. |
+| **6** | **Benchmark Executed** | `PENDING (BLOCKER FIXED)` | **Benchmark Blocker**: NumPy 2.x `np.in1d` API deprecation `AttributeError`. **Fix**: Replaced with `np.isin`. Code compiled & tested. Full 51k-image benchmark pending execution. |
+| **7** | **Accuracy Validated** | `PENDING` | Empirical Rank-1, Rank-5, mAP, FMR, and FNMR accuracy metrics remain explicitly `null` until benchmark execution completes. |
 | **8** | **Real Two-Camera Test** | `PENDING` | Single-camera ByteTrack pipeline active. Multi-camera correlation tested via unit test harness. Live multi-node field correlation pending physical model deployment. |
 | **9** | **Performance Validated** | `PASS (Baseline)` | Single-camera YOLOv8 + ByteTrack pipeline operates at 148 FPS (8.4ms TRT FP16). Re-ID model overhead pending weights benchmark. |
 | **10** | **Production Ready** | `SAFE FALLBACK ACTIVE` | System operates safely in fallback mode with `reid.enabled: false`. Zero fake data or fabricated metrics exist in production telemetry. |

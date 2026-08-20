@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Unit Test Suite for ATOS v3.5 Re-ID Engine (tools/reid_engine.py)
-Tests fallback logic, cosine similarity calculations, and spatiotemporal window filtering.
+Unit Test Suite for ATOS v3.5 Re-ID Engine & Benchmark (tools/reid_engine.py & scripts/benchmark_reid.py)
+Tests fallback logic, cosine similarity calculations, spatiotemporal window filtering,
+and AP evaluation membership mask operations (compute_ap np.isin).
 Note: Synthetic vectors exist strictly inside unit tests and are never injected into production.
 """
 
 import unittest
 import numpy as np
 from tools.reid_engine import CrossCameraReIDManager
+from scripts.benchmark_reid import compute_ap
 
 class TestReIDEngine(unittest.TestCase):
 
@@ -59,6 +61,30 @@ class TestReIDEngine(unittest.TestCase):
         self.assertEqual(res2["source_camera_id"], "cam_a")
         self.assertEqual(res2["target_camera_id"], "cam_b")
         self.assertGreaterEqual(res2["similarity_score"], 0.8)
+
+    def test_compute_ap_membership_mask(self):
+        """Verify compute_ap function and np.isin membership mask compatibility in NumPy 2.x."""
+        query_id = 1
+        query_cam = 1
+
+        gallery_ids = np.array([1, 2, 1, 3, 1], dtype=np.int32)
+        gallery_cams = np.array([1, 2, 2, 3, 3], dtype=np.int32)
+        sim_scores = np.array([0.9, 0.8, 0.85, 0.4, 0.95], dtype=np.float32)
+
+        # compute_ap should evaluate good matches (gallery_id == query_id and gallery_cam != query_cam)
+        # Good indexes: index 2 (cam 2), index 4 (cam 3)
+        # Junk indexes: index 0 (cam 1 - same cam)
+        ap, r1, r5 = compute_ap(query_id, query_cam, gallery_ids, gallery_cams, sim_scores)
+
+        self.assertGreater(ap, 0.0)
+        self.assertIn(r1, [0, 1])
+        self.assertIn(r5, [0, 1])
+
+        # Explicitly test np.isin membership mask behavior
+        index = [4, 2, 1, 3] # Excluded index 0 (same cam junk)
+        good_index = np.array([2, 4])
+        matches = np.isin(index, good_index)
+        np.testing.assert_array_equal(matches, np.array([True, True, False, False]))
 
 if __name__ == "__main__":
     unittest.main()

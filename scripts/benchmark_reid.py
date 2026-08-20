@@ -84,7 +84,7 @@ def compute_ap(query_id: int, query_cam: int, gallery_ids: np.ndarray, gallery_c
     index = np.argsort(-similarity_scores)
     index = [i for i in index if i not in junk_index]
 
-    matches = np.in1d(index, good_index)
+    matches = np.isin(index, good_index)
     num_good = len(good_index)
 
     if not np.any(matches):
