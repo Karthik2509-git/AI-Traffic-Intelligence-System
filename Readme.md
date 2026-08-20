@@ -5,16 +5,14 @@
 ---
 
 <p align="center">
-  <img src="https://img.shields.io/badge/ATOS-v2.0--LATEST-00e5ff?style=for-the-badge&logo=nvidia&logoColor=00e5ff&color=0c0721" alt="Version 2.0">
-  <img src="https://img.shields.io/badge/C++-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++ Compiler">
+  <img src="https://img.shields.io/badge/ATOS-v3.5--STUDIO-00e5ff?style=for-the-badge&logo=nvidia&logoColor=00e5ff&color=0c0721" alt="Version 3.5">
+  <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++ Compiler">
   <img src="https://img.shields.io/badge/CUDA-12.4-76B900?style=for-the-badge&logo=nvidia&logoColor=white" alt="CUDA Acceleration">
   <img src="https://img.shields.io/badge/TensorRT-10.1-76B900?style=for-the-badge&logo=nvidia&logoColor=white" alt="NVIDIA TensorRT">
   <img src="https://img.shields.io/badge/YOLO-v8m-00F2FE?style=for-the-badge&logo=ultralytics&logoColor=white" alt="YOLOv8 Model">
-  <img src="https://img.shields.io/badge/OpenCV-4.9.0-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white" alt="OpenCV Support">
-  <img src="https://img.shields.io/badge/Windows-Compatible-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows Host OS">
+  <img src="https://img.shields.io/badge/Re--ID-v3.5-ff9f43?style=for-the-badge&logo=target&logoColor=white" alt="Cross-Camera Re-ID">
+  <img src="https://img.shields.io/badge/React-Studio-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="ATOS Studio UI">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Stars-5k%2B-green?style=for-the-badge&logo=github" alt="Repository Stars">
-  <img src="https://img.shields.io/badge/Updated-July%202026-blueviolet?style=for-the-badge" alt="Last Updated">
 </p>
 
 ---

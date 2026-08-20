@@ -38,6 +38,7 @@ To achieve commercial-grade performance while maintaining developer agility, ATO
   - `CUDAPreprocessor`: Fused CUDA kernels (`kernel_fusion.cu`) for single-pass resize, BGR→RGB conversion, float normalization, and edge contrast boosting.
   - `TensorRTEngine`: Asynchronous FP16 YOLOv8 / RT-DETR execution via `cudaStream_t` and `nvinfer_10`.
   - `ByteTrackEngine`: High-performance Kalman Filter & Hungarian algorithm multi-object tracker.
+  - `ReIDModelAdapter`: Vehicle feature vector extractor & cross-camera identity correlation engine (`include/reid/reid_adapter.hpp`, `tools/reid_engine.py`).
   - `TelemetryServer`: Low-latency UDP/WebSocket state synchronization server.
 
 ### B. ATOS Studio (Browser Platform & Dashboard)
